@@ -637,17 +637,47 @@ def probe_miner(ip):
             "vr_temp_c": st.get("vr_temp_c")}
 
 
+PRIVATE_NETS = [ipaddress.IPv4Network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")]
+
+
+class SubnetError(ValueError):
+    """Ungueltige/nicht erlaubte Subnetz-Eingabe: code + params fuer die Uebersetzung (err.<code>)."""
+
+    def __init__(self, code, text, **params):
+        self.code, self.params = code, params
+        super().__init__(text)
+
+
+def parse_custom_subnet(text):
+    """Freie Eingabe -> IPv4Network /24. Erlaubt: 'x.y.z.0/24', 'x.y.z' (3 Oktette), 'x.y.z.w' (dessen /24).
+    Nur private Bereiche (RFC 1918) und hoechstens 254 Hosts - kein Scannen fremder/oeffentlicher Netze."""
+    raw = str(text or "").strip()
+    if re.fullmatch(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.?", raw):
+        raw = raw.rstrip(".") + ".0/24"
+    elif re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", raw):
+        raw += "/24"
+    try:
+        net = ipaddress.IPv4Network(raw, strict=False)
+    except ValueError:
+        raise SubnetError("subnet_invalid", f"invalid subnet {text!r} (use x.y.z.0/24, private ranges only)", input=str(text))
+    if net.prefixlen != 24:
+        raise SubnetError("subnet_invalid", f"invalid subnet {text!r}: only /24 is allowed", input=str(text))
+    if not any(net.subnet_of(p) for p in PRIVATE_NETS):
+        raise SubnetError("subnet_public", f"{net} is not a private network - only private subnets can be scanned",
+                          input=str(net))
+    return net
+
+
 def search_miners(which="auto"):
     subs = local_subnets()
     if which in (None, "", "auto"):
         nets = [x["subnet"] for x in subs if x["recommended"]] or [x["subnet"] for x in subs[:1]]
     elif which == "all":
         nets = [x["subnet"] for x in subs]
-    else:
-        net = ipaddress.IPv4Network(which, strict=False)
-        if net.prefixlen < 24:
-            raise ValueError(f"{net} is larger than /24 - only /24 or smaller allowed")
-        nets = [str(net)]
+    elif str(which).strip() in {x["subnet"] for x in subs}:     # erkanntes eigenes Netz (Auswahlliste)
+        nets = [str(which).strip()]
+    else:                                                      # frei eingegeben: auch ohne eigenes Interface
+        nets = [str(parse_custom_subnet(which))]
     if not nets:
         raise ValueError("no IPv4 network interface found for the miner search - enter the miner IP directly "
                          "or choose a subnet under 'Advanced'")
@@ -1087,7 +1117,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             return self._send(200, search_miners(body.get("subnet") or "auto"))
         except ValueError as e:
-            return self._send(400, {"error": str(e)})
+            return self._send(400, exc_body(e))
         finally:
             SEARCH_LOCK.release()
 
@@ -1584,7 +1614,11 @@ tr.sub.s-ok td { background: var(--st-ok-bg); }
         </div>
         <details id="adv" style="margin-top:12px"><summary data-i18n="conn.advanced">Advanced: choose subnet</summary>
           <div class="row"><select id="subnet" style="min-width:280px"></select><button type="button" id="search2" class="btn ghost" data-i18n="btn.scan">Scan</button>
-          <span class="muted" id="subinfo" style="align-self:center"></span></div></details>
+          <span class="muted" id="subinfo" style="align-self:center"></span></div>
+          <div class="row" style="margin-top:8px"><label class="field"><span data-i18n="subnet.custom_label">Scan custom subnet</span>
+            <input id="subnet_custom" data-i18n-ph="subnet.custom_ph" placeholder="e.g. 192.168.0.0/24" spellcheck="false" style="width:200px"></label>
+            <button type="button" id="search3" class="btn ghost" data-i18n="btn.scan" style="align-self:flex-end">Scan</button></div>
+          <div class="muted" style="font-size:12.5px;margin-top:4px" data-i18n="subnet.custom_hint">Also for networks this computer is not attached to, if reachable via your router. Private ranges only, one /24 at a time.</div></details>
         <div id="searchinfo" class="muted" style="margin-top:8px;font-size:13px"></div>
         <div class="tablebox" id="hitsbox" style="margin-top:8px;display:none"><div class="scroll"><table id="hits"></table></div></div>
         <details id="pinchange" style="display:none;margin-top:12px"><summary data-i18n="pin.change_title">Change PIN</summary>
@@ -1812,6 +1846,8 @@ async function doSearch(subnet){$("searchinfo").textContent=t("search.running",{
   }catch(e){$("searchinfo").textContent=t("search.failed",{why:trErr(e)})}}
 $("search").onclick=()=>doSearch("auto");
 $("search2").onclick=()=>doSearch($("subnet").value);
+$("search3").onclick=()=>{const v=$("subnet_custom").value.trim();if(!v){$("searchinfo").textContent=t("err.subnet_invalid");return}doSearch(v)};
+$("subnet_custom").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();$("search3").click()}});
 const SUBLBL={"aktiv/LAN":"subnet.lan","docker":"subnet.docker","vpn/tailscale":"subnet.vpn","sonstiges":"subnet.other"};
 async function fillSubnets(){try{const j=await api("GET","/subnets");
   $("subnet").innerHTML=j.subnets.map(s=>`<option value="${esc(s.subnet)}"${s.recommended?" selected":""}>${esc(s.subnet)} – ${esc(SUBLBL[s.label]?t(SUBLBL[s.label]):s.label)} (${esc(s.interface)})${s.recommended?" – "+t("subnet.recommended"):""}</option>`).join("")+`<option value="all">${t("subnet.all")}</option>`;

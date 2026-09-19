@@ -342,5 +342,10 @@
  "footer.license": "MIT License",
  "footer.source": "Source code on GitHub",
  "risk.title": "Use at your own risk",
- "risk.text": "MinerTune changes voltage/clock settings – incorrect use can damage your miner. No warranty."
+ "risk.text": "MinerTune changes voltage/clock settings – incorrect use can damage your miner. No warranty.",
+ "subnet.custom_label": "Scan custom subnet",
+ "subnet.custom_ph": "e.g. 192.168.0.0/24",
+ "subnet.custom_hint": "Also for networks this computer is not attached to, if reachable via your router. Private ranges only, one /24 at a time.",
+ "err.subnet_invalid": "Invalid subnet (use x.y.z.0/24, private ranges only)",
+ "err.subnet_public": "Only private subnets can be scanned"
 }

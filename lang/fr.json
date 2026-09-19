@@ -343,5 +343,10 @@
  "footer.license": "Licence MIT",
  "footer.source": "Code source sur GitHub",
  "risk.title": "Utilisation à vos propres risques",
- "risk.text": "MinerTune modifie les réglages de tension et d'horloge – une mauvaise utilisation peut endommager votre miner. Aucune garantie."
+ "risk.text": "MinerTune modifie les réglages de tension et d'horloge – une mauvaise utilisation peut endommager votre miner. Aucune garantie.",
+ "subnet.custom_label": "Scanner un sous-réseau personnalisé",
+ "subnet.custom_ph": "p. ex. 192.168.0.0/24",
+ "subnet.custom_hint": "Aussi pour des réseaux auxquels cet ordinateur n'est pas connecté, s'ils sont joignables via le routeur. Plages privées uniquement, un /24 à la fois.",
+ "err.subnet_invalid": "Sous-réseau non valide (utilisez x.y.z.0/24, plages privées uniquement)",
+ "err.subnet_public": "Seuls les sous-réseaux privés peuvent être scannés"
 }

@@ -343,5 +343,10 @@
  "footer.license": "MIT-licentie",
  "footer.source": "Broncode op GitHub",
  "risk.title": "Gebruik op eigen risico",
- "risk.text": "MinerTune wijzigt spannings- en klokinstellingen – verkeerd gebruik kan je miner beschadigen. Geen garantie."
+ "risk.text": "MinerTune wijzigt spannings- en klokinstellingen – verkeerd gebruik kan je miner beschadigen. Geen garantie.",
+ "subnet.custom_label": "Eigen subnet scannen",
+ "subnet.custom_ph": "bijv. 192.168.0.0/24",
+ "subnet.custom_hint": "Ook voor netwerken waarop deze computer niet is aangesloten, als ze via de router bereikbaar zijn. Alleen privébereiken, één /24 tegelijk.",
+ "err.subnet_invalid": "Ongeldig subnet (gebruik x.y.z.0/24, alleen privébereiken)",
+ "err.subnet_public": "Alleen privé-subnets kunnen worden gescand"
 }

@@ -342,5 +342,10 @@
  "footer.license": "MIT-Lizenz",
  "footer.source": "Quellcode auf GitHub",
  "risk.title": "Nutzung auf eigene Gefahr",
- "risk.text": "MinerTune veraendert Spannungs- und Takteinstellungen – falsche Nutzung kann den Miner beschaedigen. Keine Gewaehr."
+ "risk.text": "MinerTune veraendert Spannungs- und Takteinstellungen – falsche Nutzung kann den Miner beschaedigen. Keine Gewaehr.",
+ "subnet.custom_label": "Eigenes Subnetz scannen",
+ "subnet.custom_ph": "z.B. 192.168.0.0/24",
+ "subnet.custom_hint": "Auch fuer Netze, an denen dieser Rechner nicht haengt, sofern ueber den Router erreichbar. Nur private Bereiche, jeweils ein /24.",
+ "err.subnet_invalid": "Ungueltiges Subnetz (Format x.y.z.0/24, nur private Bereiche)",
+ "err.subnet_public": "Nur private Subnetze koennen gescannt werden"
 }

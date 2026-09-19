@@ -343,5 +343,10 @@
  "footer.license": "Licencia MIT",
  "footer.source": "Código fuente en GitHub",
  "risk.title": "Uso bajo tu propia responsabilidad",
- "risk.text": "MinerTune modifica los ajustes de voltaje y reloj: un uso incorrecto puede dañar tu miner. Sin garantía."
+ "risk.text": "MinerTune modifica los ajustes de voltaje y reloj: un uso incorrecto puede dañar tu miner. Sin garantía.",
+ "subnet.custom_label": "Escanear subred propia",
+ "subnet.custom_ph": "p. ej. 192.168.0.0/24",
+ "subnet.custom_hint": "También para redes a las que este equipo no está conectado, si son accesibles a través del router. Solo rangos privados, un /24 cada vez.",
+ "err.subnet_invalid": "Subred no válida (usa x.y.z.0/24, solo rangos privados)",
+ "err.subnet_public": "Solo se pueden escanear subredes privadas"
 }

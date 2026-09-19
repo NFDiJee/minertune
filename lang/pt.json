@@ -343,5 +343,10 @@
  "footer.license": "Licença MIT",
  "footer.source": "Código-fonte no GitHub",
  "risk.title": "Utilização por sua conta e risco",
- "risk.text": "O MinerTune altera as definições de tensão e relógio – uma utilização incorreta pode danificar o seu miner. Sem garantia."
+ "risk.text": "O MinerTune altera as definições de tensão e relógio – uma utilização incorreta pode danificar o seu miner. Sem garantia.",
+ "subnet.custom_label": "Analisar sub-rede personalizada",
+ "subnet.custom_ph": "p. ex. 192.168.0.0/24",
+ "subnet.custom_hint": "Também para redes às quais este computador não está ligado, se acessíveis através do router. Apenas intervalos privados, uma /24 de cada vez.",
+ "err.subnet_invalid": "Sub-rede inválida (use x.y.z.0/24, apenas intervalos privados)",
+ "err.subnet_public": "Só é possível analisar sub-redes privadas"
 }
