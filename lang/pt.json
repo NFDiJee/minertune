@@ -325,6 +325,7 @@
  "code.est_fast_reserve": "janela completa por frequência: {n} (Vmin + reserva); precheck ~{secs} s",
  "code.derive_start_below_floor": "a tensão inicial {start} mV está abaixo do piso {floor} mV",
  "code.derive_no_freqs": "nenhuma frequência na banda",
+ "code.range_too_narrow": "Faixa de tensão estreita demais para uma varredura (core_min {min} .. core_max {max}, stock {stock} mV) – aqui só faz sentido definir pontos manualmente.",
  "code.unknown_mode": "modo de sweep {value} desconhecido ({allowed})",
  "code.unknown_resolution": "resolução {value} desconhecida ({allowed})",
  "code.target_required": "hashrate alvo (TH/s > 0) necessário",

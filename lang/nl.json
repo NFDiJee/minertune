@@ -325,6 +325,7 @@
  "code.est_fast_reserve": "volledig venster per frequentie: {n} (Vmin + reserve); precheck ~{secs} s",
  "code.derive_start_below_floor": "startspanning {start} mV ligt onder de ondergrens {floor} mV",
  "code.derive_no_freqs": "geen frequenties in de band",
+ "code.range_too_narrow": "Spanningsbereik te smal voor een sweep (core_min {min} .. core_max {max}, stock {stock} mV) – hier is alleen handmatig een punt instellen zinvol.",
  "code.unknown_mode": "sweep-modus {value} onbekend ({allowed})",
  "code.unknown_resolution": "resolutie {value} onbekend ({allowed})",
  "code.target_required": "doel-hashrate (TH/s > 0) vereist",

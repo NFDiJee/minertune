@@ -325,6 +325,7 @@
  "code.est_fast_reserve": "ventana completa por frecuencia: {n} (Vmin + reserva); precheck ~{secs} s",
  "code.derive_start_below_floor": "la tensión inicial {start} mV está por debajo del suelo {floor} mV",
  "code.derive_no_freqs": "no hay frecuencias en la banda",
+ "code.range_too_narrow": "Rango de tensión demasiado estrecho para un barrido (core_min {min} .. core_max {max}, stock {stock} mV): aquí solo tiene sentido fijar puntos manualmente.",
  "code.unknown_mode": "modo de sweep {value} desconocido ({allowed})",
  "code.unknown_resolution": "resolución {value} desconocida ({allowed})",
  "code.target_required": "se requiere hashrate objetivo (TH/s > 0)",

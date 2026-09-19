@@ -324,6 +324,7 @@
  "code.est_fast_reserve": "volles Fenster je Frequenz: {n} (Vmin + Reserve); Vorabcheck ~{secs} s",
  "code.derive_start_below_floor": "Startspannung {start} mV liegt unter dem Boden {floor} mV",
  "code.derive_no_freqs": "keine Frequenzen im Band",
+ "code.range_too_narrow": "Spannungsbereich zu schmal für einen Sweep (core_min {min} .. core_max {max}, Stock {stock} mV) – hier ist nur manuelles Punktsetzen sinnvoll.",
  "code.unknown_mode": "Sweep-Modus {value} unbekannt ({allowed})",
  "code.unknown_resolution": "Aufloesung {value} unbekannt ({allowed})",
  "code.target_required": "Ziel-Hashrate (TH/s > 0) erforderlich",

@@ -324,6 +324,7 @@
  "code.est_fast_reserve": "full window per frequency: {n} (Vmin + reserve); precheck ~{secs} s",
  "code.derive_start_below_floor": "start voltage {start} mV is below the floor {floor} mV",
  "code.derive_no_freqs": "no frequencies in band",
+ "code.range_too_narrow": "Voltage range too narrow for a sweep (core_min {min} .. core_max {max}, stock {stock} mV) - only manual point setting is useful here.",
  "code.unknown_mode": "sweep mode {value} unknown ({allowed})",
  "code.unknown_resolution": "resolution {value} unknown ({allowed})",
  "code.target_required": "target hashrate (TH/s > 0) required",

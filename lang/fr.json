@@ -325,6 +325,7 @@
  "code.est_fast_reserve": "fenêtre complète par fréquence : {n} (Vmin + réserve) ; precheck ~{secs} s",
  "code.derive_start_below_floor": "la tension de départ {start} mV est sous le plancher {floor} mV",
  "code.derive_no_freqs": "aucune fréquence dans la bande",
+ "code.range_too_narrow": "Plage de tension trop étroite pour un balayage (core_min {min} .. core_max {max}, stock {stock} mV) – seul le réglage manuel d'un point est utile ici.",
  "code.unknown_mode": "mode de sweep {value} inconnu ({allowed})",
  "code.unknown_resolution": "résolution {value} inconnue ({allowed})",
  "code.target_required": "hashrate cible (TH/s > 0) requis",

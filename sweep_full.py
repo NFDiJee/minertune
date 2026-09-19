@@ -40,6 +40,7 @@ FREQ_STEP_FACTOR = 25    # Frequenzschritt = FREQ_STEP_FACTOR * frequency_step (
 MV_STEP_FACTOR   = 5     # Spannungsschritt = MV_STEP_FACTOR * core_step (Profil)
 FLOOR_PCT   = 0.75       # Spannungsboden der Vmin-Suche = stock_core_mv * 0.75
 START_PCT   = 1.00       # Startspannung je Frequenz = stock_core_mv * 1.00 (dann heruntertasten)
+MIN_MV_SPAN_PCT = 0.05   # Spannungs-Suchspanne (core_min .. mv_start) mind. 5 % von stock_core_mv, sonst range_too_narrow
 START_MARGIN_STEPS = 2   # ab 2. Frequenz: Start = Vmin(hoehere Frequenz) + 2 Spannungsschritte (<= mv_start)
 WINDOW_MIN_S = 600 ; TARGET_HITS = 600 ; WINDOW_MAX_S = 900
 ERROR_MAX_PCT = 2.0 ; HASHRATE_MIN_FRAC = 0.90
@@ -175,6 +176,7 @@ MSG_EN = {
     "est_fast_reserve": "full window per frequency: {n} (Vmin + reserve); precheck ~{secs}s",
     "derive_start_below_floor": "mv_start {start} < mv_floor {floor} (START_PCT < FLOOR_PCT?)",
     "derive_no_freqs": "no frequencies in band",
+    "range_too_narrow": "Voltage range too narrow for a sweep (core_min {min} .. core_max {max}, stock {stock} mV) - only manual point setting is useful here.",
     # Fehler / Abbrueche
     "unknown_mode": "sweep_mode {value} unknown ({allowed})",
     "unknown_resolution": "resolution {value} unknown ({allowed})",
@@ -303,6 +305,28 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
+def snap(v, step, lo, hi):
+    """Auf step runden und HART in [lo..hi] klemmen; das Ergebnis liegt immer auf dem Schrittraster."""
+    lo_a, hi_a = int(-(-lo // step) * step), int(hi // step * step)
+    return clamp(round_to(v, step), lo_a, hi_a)
+
+
+def mv_range(smv, floor_pct, cs, cmin, cmax, step):
+    """Spannungs-Suchspanne -> (mv_start, mv_floor, fehler oder None). Beide Werte auf core_step und in
+    [core_min..core_max]. Schmaler Bereich (Spanne < step): Boden auf den Standard-FLOOR_PCT zurueck, der
+    ebenfalls an core_min geklemmt wird (bei Minern wie dem Thor P2 = core_min). Bleibt insgesamt
+    weniger als max(step, MIN_MV_SPAN_PCT * stock) zwischen core_min und mv_start -> range_too_narrow."""
+    start = snap(smv * START_PCT, cs, cmin, cmax)
+    floor = snap(smv * floor_pct, cs, cmin, cmax)
+    if start - floor < step:
+        floor = min(floor, snap(smv * FLOOR_PCT, cs, cmin, cmax))
+    avail = start - snap(cmin, cs, cmin, cmax)
+    err = None
+    if avail < max(step, MIN_MV_SPAN_PCT * smv) or start - floor < step:
+        err = msg("range_too_narrow", min=cmin, max=cmax, stock=smv)
+    return start, floor, err
+
+
 def derive(p):
     """Alle Grenzen aus dem Profil; liefert dict mit Werten und Formeltexten."""
     fs, cs = p["frequency_step"], p["core_step"]
@@ -311,20 +335,19 @@ def derive(p):
     d = {"freq_step": fs, "mv_step": cs}
     d["freq_sweep_step"] = max(fs, FREQ_STEP_FACTOR * fs)
     d["mv_sweep_step"] = max(cs, MV_STEP_FACTOR * cs)
-    d["f_low"] = clamp(round_to(sf * (1 - FREQ_LOW_PCT), fs), fmin, fmax)
+    d["f_low"] = snap(sf * (1 - FREQ_LOW_PCT), fs, fmin, fmax)
     if ALLOW_ABOVE_STOCK:
-        d["f_high"] = clamp(round_to(sf * (1 + FREQ_HIGH_PCT), fs), fmin, fmax)
+        d["f_high"] = snap(sf * (1 + FREQ_HIGH_PCT), fs, fmin, fmax)
     else:
-        d["f_high"] = clamp(sf, fmin, fmax)
+        d["f_high"] = snap(sf, fs, fmin, fmax)
     freqs, f = [], d["f_low"]
     while f <= d["f_high"]:
-        freqs.append(clamp(round_to(f, fs), fmin, fmax))
+        freqs.append(snap(f, fs, fmin, fmax))
         f += d["freq_sweep_step"]
     if freqs and freqs[-1] != d["f_high"]:
         freqs.append(d["f_high"])
     d["freqs"] = sorted(set(freqs))
-    d["mv_floor"] = clamp(round_to(smv * FLOOR_PCT, cs), cmin, cmax)
-    d["mv_start"] = clamp(round_to(smv * START_PCT, cs), cmin, cmax)
+    d["mv_start"], d["mv_floor"], mv_err = mv_range(smv, FLOOR_PCT, cs, cmin, cmax, d["mv_sweep_step"])
     vin = p["input_voltage_v"]
     d["input_v_min"] = vin * INPUT_V_MIN_FRAC if isinstance(vin, (int, float)) else None
     d["safe"] = (p["current_frequency_mhz"], p["core_mv"])
@@ -332,7 +355,7 @@ def derive(p):
                        if isinstance(p["job_interval_ms"], (int, float)) else None)
     d["mv_steps"] = list(range(d["mv_start"], d["mv_floor"] - 1, -d["mv_sweep_step"])) \
         if d["mv_start"] >= d["mv_floor"] else []
-    d["errors"] = []
+    d["errors"] = [mv_err] if mv_err else []
     if d["mv_start"] < d["mv_floor"]:
         d["errors"].append(msg("derive_start_below_floor", start=d["mv_start"], floor=d["mv_floor"]))
     if not d["freqs"]:
@@ -340,11 +363,11 @@ def derive(p):
     d["formula"] = {
         "freq_sweep_step": f"max(frequency_step, {FREQ_STEP_FACTOR} * frequency_step) = max({fs}, {FREQ_STEP_FACTOR * fs})",
         "mv_sweep_step": f"max(core_step, {MV_STEP_FACTOR} * core_step) = max({cs}, {MV_STEP_FACTOR * cs})",
-        "f_low": f"clamp(round_to({sf} * (1 - {FREQ_LOW_PCT}) = {sf * (1 - FREQ_LOW_PCT):g}, {fs}), {fmin}, {fmax})",
-        "f_high": (f"clamp(round_to({sf} * (1 + {FREQ_HIGH_PCT}), {fs}), {fmin}, {fmax})" if ALLOW_ABOVE_STOCK
-                   else f"stock_frequency_mhz (ALLOW_ABOVE_STOCK=False)"),
-        "mv_start": f"clamp(round_to({smv} * {START_PCT} = {smv * START_PCT:g}, {cs}), {cmin}, {cmax})",
-        "mv_floor": f"clamp(round_to({smv} * {FLOOR_PCT} = {smv * FLOOR_PCT:g}, {cs}), {cmin}, {cmax})",
+        "f_low": f"clamp(round_to({sf} * (1 - {FREQ_LOW_PCT}) = {sf * (1 - FREQ_LOW_PCT):g}, {fs}), {fmin}, {fmax}) = {d['f_low']}",
+        "f_high": (f"clamp(round_to({sf} * (1 + {FREQ_HIGH_PCT}), {fs}), {fmin}, {fmax}) = {d['f_high']}" if ALLOW_ABOVE_STOCK
+                   else f"clamp(stock_frequency_mhz {sf}, {fmin}, {fmax}) = {d['f_high']} (ALLOW_ABOVE_STOCK=False)"),
+        "mv_start": f"clamp(round_to({smv} * {START_PCT} = {smv * START_PCT:g}, {cs}), {cmin}, {cmax}) = {d['mv_start']}",
+        "mv_floor": f"clamp(round_to({smv} * {FLOOR_PCT} = {smv * FLOOR_PCT:g}, {cs}), {cmin}, {cmax}) = {d['mv_floor']}",
         "input_v_min": f"start input_voltage_v {_n(vin, 2)} * {INPUT_V_MIN_FRAC}",
         "safe": "operating point at start (current_frequency_mhz / core_mv)",
         "job_alt_ms": f"job_interval_ms {p['job_interval_ms']} * {JOBCAL_ALT_FACTOR}",
@@ -417,23 +440,27 @@ def plan_matrix(p, mode="full", resolution="fein", target_ths=None, allow_above_
     formula["mv_step"] = f"max({cs}, {msf} * {cs}) * {mult} = {mv_step} mV"
 
     # stock-relative Grenzen + harte Mauer
-    f_low = clamp(round_to(S * (1 - fl_pct), fs), fmin, fmax)
+    f_low = snap(S * (1 - fl_pct), fs, fmin, fmax)
     formula["f_low"] = f"round_to({S} * (1 - {fl_pct}) = {S * (1 - fl_pct):g}, {fs}), clamped [{fmin}..{fmax}] = {f_low}"
     f_high_raw = round_to(S * (1 + fh_pct), fs) if allow else S
-    f_high = min(f_high_raw, fmax)
+    f_high = snap(f_high_raw, fs, fmin, fmax)
     f_high_capped = f_high_raw > fmax
+    if f_high < f_low:
+        raise CodedError("derive_no_freqs")
     formula["f_high"] = (f"min(round_to({S} * (1 + {fh_pct}), {fs}) = {f_high_raw}, frequency_max {fmax}) = {f_high}"
                          if allow else f"stock_frequency_mhz {S} (allow_above_stock=False)")
     f_mid = clamp(round_to(S * MID_FRAC, fs), f_low, f_high)
     formula["f_mid"] = f"round_to({S} * {MID_FRAC}, {fs}) = {f_mid}"
-    mv_stock = clamp(round_to(SMV * START_PCT, cs), cmin, cmax)
+    # Spannung HART in [core_min..core_max]; zu schmaler Bereich -> klare Meldung statt ungueltiger Werte
+    mv_stock, mv_floor, mv_err = mv_range(SMV, floor_pct, cs, cmin, cmax, mv_step)
+    if mv_err:
+        raise CodedError(mv_err["code"], **mv_err["params"])
     mv_top_raw = round_to(SMV * (1 + mh_pct), cs) if allow and mh_pct > 0 else mv_stock
-    mv_top = min(mv_top_raw, cmax)
-    mv_floor = clamp(round_to(SMV * floor_pct, cs), cmin, cmax)
+    mv_top = max(mv_stock, snap(mv_top_raw, cs, cmin, cmax))
     formula["mv_start"] = (f"<= stock: {mv_stock} mV; above stock: min(round_to({SMV} * (1 + {mh_pct}), {cs}) = "
                            f"{mv_top_raw}, core_max {cmax}) = {mv_top} mV" if allow and mh_pct > 0
-                           else f"round_to({SMV} * {START_PCT}, {cs}) = {mv_stock} mV")
-    formula["mv_floor"] = f"round_to({SMV} * {floor_pct} = {SMV * floor_pct:g}, {cs}) = {mv_floor} mV"
+                           else f"round_to({SMV} * {START_PCT}, {cs}), clamped [{cmin}..{cmax}] = {mv_stock} mV")
+    formula["mv_floor"] = f"round_to({SMV} * {floor_pct} = {SMV * floor_pct:g}, {cs}), clamped [{cmin}..{cmax}] = {mv_floor} mV"
     if f_high_capped:
         notes.append(msg("note_freq_capped", raw=f_high_raw, max=fmax))
     if mv_top_raw > cmax:
@@ -463,8 +490,8 @@ def plan_matrix(p, mode="full", resolution="fein", target_ths=None, allow_above_
         if not gh_per_mhz:
             raise CodedError("no_estimate")
         f_t = target_ths * 1000 / gh_per_mhz
-        lo = clamp(round_to(f_t * TARGET_BAND[0], fs), fmin, f_high)
-        hi = clamp(round_to(f_t * TARGET_BAND[1], fs), fmin, f_high)
+        lo = snap(f_t * TARGET_BAND[0], fs, fmin, f_high)
+        hi = snap(f_t * TARGET_BAND[1], fs, fmin, f_high)
         target = {"target_ths": target_ths, "f_target_mhz": round(f_t, 1), "gh_per_mhz": round(gh_per_mhz, 3),
                   "preliminary": gh_prelim, "reachable": f_t <= f_high,
                   "formula": f"{target_ths} * 1000 / {gh_per_mhz:.2f} GH/s/MHz = {f_t:.1f} MHz"}
@@ -493,7 +520,10 @@ def plan_matrix(p, mode="full", resolution="fein", target_ths=None, allow_above_
                        "expected_ths": round(f_c * gh_per_mhz / 1000, 3) if gh_per_mhz else None})
     for i, q in enumerate(points):
         q["index"] = i
-        assert q["freq"] <= fmax and q["mv_start"] <= cmax, "wall violated"   # harte Mauer
+        # harte Mauer: gar nicht erst ungueltige Werte planen (Grenzen + Schrittraster)
+        assert fmin <= q["freq"] <= fmax and not q["freq"] % fs, "wall violated (frequency)"
+        assert cmin <= q["mv_floor"] <= q["mv_start"] <= cmax, "wall violated (voltage)"
+        assert not q["mv_floor"] % cs and not q["mv_start"] % cs, "wall violated (core_step)"
     requires_gate = any(q["above_stock"] for q in points)
     order = "asc" if mode == "efficiency" else "desc"
     early_stop = msg("early_stop_rule", rises=EFF_STOP_RISES) if mode == "efficiency" else None
