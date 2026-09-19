@@ -98,20 +98,39 @@ else
         PORT="${FALLBACK_PORT}"
     fi
     info "creating config.json from config.example.json (port ${PORT})"
-    install -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 0600 "${INSTALL_DIR}/config.example.json" "${CFG}"
-    python3 - "${CFG}" "${PORT}" <<'PY'
+    # Als root vollstaendig in eine root-eigene Temp-Datei schreiben, DANN chown/chmod und per
+    # rename an ihren Platz. Nie als root in eine Datei schreiben, die schon minertune gehoert:
+    # INSTALL_DIR ist sticky + gruppenschreibbar, und mit fs.protected_regular=2 (Debian/Pi-OS-
+    # Standard) verweigert der Kernel dann root das Oeffnen mit O_CREAT -> PermissionError.
+    CFG_TMP="$(mktemp "${INSTALL_DIR}/.config.json.XXXXXX")"
+    trap 'rm -f -- "${CFG_TMP:-}"' EXIT
+    python3 - "${INSTALL_DIR}/config.example.json" "${CFG_TMP}" "${PORT}" <<'PY'
 import json, sys
-path, port = sys.argv[1], int(sys.argv[2])
-with open(path, encoding="utf-8") as f:
+src, dst, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
+with open(src, encoding="utf-8") as f:
     cfg = json.load(f)
 cfg["bind_port"] = port
-with open(path, "w", encoding="utf-8") as f:
+with open(dst, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=2)
     f.write("\n")
 PY
+    chown "${SERVICE_USER}:${SERVICE_USER}" "${CFG_TMP}"
+    chmod 0600 "${CFG_TMP}"
+    mv -f -T -- "${CFG_TMP}" "${CFG}"
+    trap - EXIT
 fi
+# Update-Lauf: vorhandene config.json nie ueberschreiben, nur Eigentuemer/Rechte korrigieren
 chown "${SERVICE_USER}:${SERVICE_USER}" "${CFG}"
 chmod 0600 "${CFG}"
+
+# Effektive Rechte pruefen und anzeigen
+info "effective permissions:"
+ls -ld "${INSTALL_DIR}" "${INSTALL_DIR}/runs" | sed 's/^/    /'
+ls -l "${CFG}" | sed 's/^/    /'
+[[ "$(stat -c '%U:%G %a' "${CFG}")" == "${SERVICE_USER}:${SERVICE_USER} 600" ]] \
+    || die "config.json has wrong owner/mode: $(stat -c '%U:%G %a' "${CFG}") (expected ${SERVICE_USER}:${SERVICE_USER} 600)"
+[[ "$(stat -c '%U:%G %a' "${INSTALL_DIR}/runs")" == "${SERVICE_USER}:${SERVICE_USER} 750" ]] \
+    || die "runs/ has wrong owner/mode: $(stat -c '%U:%G %a' "${INSTALL_DIR}/runs") (expected ${SERVICE_USER}:${SERVICE_USER} 750)"
 
 # --- systemd ----------------------------------------------------------------
 info "installing systemd unit ${UNIT_PATH}"
