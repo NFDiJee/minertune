@@ -318,6 +318,7 @@
  "code.early_abort_warmup": "aborto antecipado: tensão insuficiente {pct} % do esperado após o aquecimento (estabilizado {settle_s} s)",
  "code.early_abort_warmup_unsettled": "aborto antecipado: tensão insuficiente {pct} % do esperado após o aquecimento (não estabilizado)",
  "code.early_abort_window_hashrate": "aborto antecipado na janela: {pct} % do esperado (média de 60 s) após {secs} s",
+ "code.early_abort_window_noisy": "interrupção antecipada na janela: {pct} % do esperado (média de {avg_s} s, sinal ruidoso) após {secs} s",
  "code.early_abort_window_error": "aborto antecipado na janela: erro {err} % após {secs} s",
  "code.underpowered": "tensão insuficiente: {pct} % do esperado",
  "code.unstable": "instável: erro {err} %",

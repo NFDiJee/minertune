@@ -70,6 +70,15 @@ FULL_MEASURE = False     # True: jeder getestete Punkt bekommt das volle Fenster
                          #       Stufe-2-Fruehabbruch und alle Sicherungen bleiben aktiv
 CAL_WINDOW_S = 120 ; WARMUP_EST_S = 45 ; OVERHEAD_EST_S = 15
 MIN_SAMPLE_FRAC = 0.8
+# Verrauschte Hashrate (z.B. Thor P2 mit job_interval 100 ms: Momentanwerte ~+-25 % um einen korrekten Mittelwert).
+# "Verrauscht" = Variationskoeffizient (stdev/mean) der local-Samples > NOISE_CV_HIGH. NUR dann gelten die
+# lockereren Regeln unten; rauscharme Signale (z.B. BS-2) werden exakt wie bisher mit HASHRATE_MIN_FRAC bewertet.
+NOISE_CV_HIGH = 0.08
+HASHRATE_MIN_FRAC_NOISY = 0.85   # voll versorgt, wenn das Mittel ueber das GANZE Fenster >= 85 % der Erwartung
+INWIN_NOISY_S = 120              # Stufe-2-Fruehabbruch im Fenster (verrauscht): nur wenn das 120-s-Mittel ...
+INWIN_NOISY_FRAC = 0.75          # ... klar und anhaltend < 75 % der Erwartung liegt (kein Abbruch durch Rausch-Dips)
+NOISE_SE_MAX = 0.02              # Fenster verlaengern, bis der relative Standardfehler des Mittels <= 2 % ...
+NOISE_EXTEND_FACTOR = 2          # ... hoechstens bis max(window_max_s, 2 * window_s)
 # ============================================================================
 
 assert tuner.STATUS_URL == STATUS
@@ -151,6 +160,7 @@ MSG_EN = {
     "early_abort_warmup": "early abort: underpowered {pct}% of expected after warmup (settled {settle_s}s)",
     "early_abort_warmup_unsettled": "early abort: underpowered {pct}% of expected after warmup (not settled)",
     "early_abort_window_hashrate": "early abort in window: {pct}% of expected (60 s average) after {secs}s",
+    "early_abort_window_noisy": "early abort in window: {pct}% of expected ({avg_s} s average, noisy signal) after {secs}s",
     "early_abort_window_error": "early abort in window: error {err}% after {secs}s",
     "underpowered": "underpowered: {pct}% of expected",
     "unstable": "unstable: error {err}%",
@@ -266,6 +276,7 @@ CONFIG_KEYS = {  # config.json-Schluessel -> Modulkonstante
     "soft_vr_c": "SOFT_VR_C", "hard_asic_c": "HARD_ASIC_C", "hard_vr_c": "HARD_VR_C",
     "input_v_min_frac": "INPUT_V_MIN_FRAC", "freq_verify_tol_mhz": "FREQ_VERIFY_TOL_MHZ",
     "settle_ma_tol_frac": "SETTLE_MA_TOL_FRAC", "warmup_max_s": "WARMUP_MAX_S",
+    "hashrate_min_frac_noisy": "HASHRATE_MIN_FRAC_NOISY", "noise_cv_high": "NOISE_CV_HIGH",
 }
 
 
@@ -866,6 +877,20 @@ def guard(st):
         raise PointAbort("input_voltage_low", value=round(vin, 2), limit=round(D["input_v_min"], 2))
 
 
+def noise_cv(vals):
+    """Rauschen der Hashrate-Samples relativ zum Mittel (None bei < 3 Werten). Geschaetzt aus den Differenzen
+    aufeinanderfolgender Samples (MSSD: sigma = sqrt(mean(dx^2) / 2)) - bei weissem Rauschen = stdev, aber
+    unempfindlich gegen langsame Trends (Einschwingen/Hochkriechen gilt so NICHT als Rauschen)."""
+    v = [x for x in vals if isinstance(x, (int, float))]
+    if len(v) < 3 or statistics.mean(v) <= 0:
+        return None
+    return math.sqrt(statistics.mean((b - a) ** 2 for a, b in zip(v, v[1:])) / 2) / statistics.mean(v)
+
+
+def is_noisy(cv):
+    return cv is not None and cv > NOISE_CV_HIGH
+
+
 def expected_ths(freq):
     return freq * GH_PER_MHZ / 1000.0 if GH_PER_MHZ else None
 
@@ -910,7 +935,10 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
             prechecked = True
             last10 = [x for tt, x in warm if tt >= t - PRECHECK_AVG_S - 0.5 and isinstance(x, (int, float))]
             pf = statistics.mean(last10) / 1000 / exp_pre if last10 else 0.0
-            if pf < PRECHECK_FRAC:
+            pcv = noise_cv([x for _, x in warm])
+            # verrauscht: nur durchfallen, wenn das kurze Mittel SIGNIFIKANT (2 Standardfehler) unter der Schwelle liegt
+            pf_test = pf * (1 + 2 * pcv / math.sqrt(len(last10))) if (is_noisy(pcv) and last10) else pf
+            if pf_test < PRECHECK_FRAC:
                 reason = msg("precheck_underpowered", pct=round(pf * 100), thresh=round(PRECHECK_FRAC * 100), secs=round(t))
                 log(f"  => {label:<10} STAGE 1 {msg_text(reason)} -> INVALID, no measurement window")
                 return dict(r, status="precheck_fail", stage=1, valid=False, reason=reason, measured_mv=meas,
@@ -947,7 +975,14 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
     exp = expected_ths(freq)
     last = [x for tt, x in warm if tt >= warm[-1][0] - SETTLE_WINDOW_S - 0.5 and isinstance(x, (int, float))] if warm else []
     warm_frac = (statistics.mean(last) / 1000 / exp) if (exp and last) else None
-    if EARLY_ABORT and warm_frac is not None and warm_frac < HASHRATE_MIN_FRAC:
+    warm_vals = [x for _, x in warm]
+    warm_cv = noise_cv(warm_vals)
+    if is_noisy(warm_cv):
+        # verrauscht: nur abbrechen, wenn das Mittel SIGNIFIKANT (2 Standardfehler) unter der Rausch-Schwelle liegt
+        warm_low = warm_frac is not None and warm_frac * (1 + 2 * warm_cv / math.sqrt(len(last))) < HASHRATE_MIN_FRAC_NOISY
+    else:
+        warm_low = warm_frac is not None and warm_frac < HASHRATE_MIN_FRAC
+    if EARLY_ABORT and warm_low:
         reason = (msg("early_abort_warmup", pct=round(warm_frac * 100), settle_s=settle_s) if settle_s
                   else msg("early_abort_warmup_unsettled", pct=round(warm_frac * 100)))
         log(f"  => {label:<10} STAGE 2 {msg_text(reason)} -> INVALID, no measurement window")
@@ -965,6 +1000,8 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
     series = {k: [] for k in tuner.SERIES_FIELDS}
     mvs, hits, n, last_report = [], 0, 0, 0.0
     wall_srcs = set()
+    noise_cap = max(window_max_s, NOISE_EXTEND_FACTOR * window_s)
+    extended = False
     while True:
         n += 1
         _sleep(t0 + n * SAMPLE_S - time.monotonic())
@@ -987,13 +1024,18 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
                      live=live_from(st), avg=({k: mm[k] for k in ["error_pct", "hashrate_local_ths", "hashrate_valid_ths",
                                                                  "wall_avg", "jth_local", "jth_valid", "samples"]} if mm else {}))
         guard(st)
-        # Stufe 2 im Fenster: gleitendes Mittel faellt unter 0.90 oder Fehlerrate steigt
-        if exp and el >= INWIN_CHECK_S:
-            recent = [x for x in series["local_hashrate_ghs"][-int(INWIN_CHECK_S / SAMPLE_S):] if isinstance(x, (int, float))]
+        # Stufe 2 im Fenster: gleitendes Mittel faellt unter 0.90 oder Fehlerrate steigt.
+        # Verrauschtes Signal: nur bei KLAR und ANHALTEND zu niedrigem 120-s-Mittel (< 75 %) - Rausch-Dips brechen nicht ab.
+        win_cv = noise_cv(warm_vals + series["local_hashrate_ghs"])      # alle Samples dieses Punkts
+        noisy = is_noisy(win_cv)
+        avg_s, lim = (INWIN_NOISY_S, INWIN_NOISY_FRAC) if noisy else (INWIN_CHECK_S, HASHRATE_MIN_FRAC)
+        if exp and el >= avg_s:
+            recent = [x for x in series["local_hashrate_ghs"][-int(avg_s / SAMPLE_S):] if isinstance(x, (int, float))]
             rf = statistics.mean(recent) / 1000 / exp if recent else None
             bad = None
-            if rf is not None and rf < HASHRATE_MIN_FRAC:
-                bad = msg("early_abort_window_hashrate", pct=round(rf * 100), secs=round(el))
+            if rf is not None and rf < lim:
+                bad = (msg("early_abort_window_noisy", pct=round(rf * 100), avg_s=avg_s, secs=round(el)) if noisy
+                       else msg("early_abort_window_hashrate", pct=round(rf * 100), secs=round(el)))
             elif mm and (mm["dvalid"] + mm["dinvalid"]) >= INWIN_MIN_HITS and mm["error_pct"] >= ERROR_MAX_PCT:
                 bad = msg("early_abort_window_error", err=round(mm["error_pct"], 2), secs=round(el))
             if bad:
@@ -1002,6 +1044,15 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
                             frac_of_expected=rf, expected_ths=exp, settle_s=settle_s,
                             point_s=round((settle_s or WARMUP_MAX_S) + el, 1))
         if (el >= window_s and hits >= target_hits) or el >= window_max_s:
+            # verrauscht: verlaengern, bis das Fenster-Mittel statistisch belastbar ist (rel. Standardfehler <= 2 %)
+            vals = [x for x in series["local_hashrate_ghs"] if isinstance(x, (int, float))]
+            se = win_cv / math.sqrt(len(vals)) if (win_cv is not None and vals) else 0.0   # SE des Fenster-Mittels
+            if noisy and se > NOISE_SE_MAX and el < noise_cap:
+                if not extended:
+                    log(f"    [{label}] noisy hashrate (cv {win_cv * 100:.0f}%, std. error {se * 100:.1f}%) "
+                        f"-> window extended (max {noise_cap:.0f}s)")
+                extended = True
+                continue
             break
     s1 = base.safe_get()
     t1 = time.monotonic()
@@ -1009,10 +1060,14 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
                     accepted1=s1.get("accepted_shares"), rejected1=s1.get("rejected_shares"))
     m = tuner.compute_metrics(series, counters, t1 - t0, diff)
 
+    # Bewertung am Mittel ueber das GANZE Fenster; Schwelle je nach Rauschen (rauscharm unveraendert 0.90)
     frac = m["hashrate_local_ths"] / exp if exp else None
+    cv = noise_cv(warm_vals + series["local_hashrate_ghs"])
+    min_frac = HASHRATE_MIN_FRAC_NOISY if is_noisy(cv) else HASHRATE_MIN_FRAC
+    frac_hits = m["hashrate_valid_ths"] / exp if (exp and m.get("hashrate_valid_ths")) else None
     min_samples = int(window_s / SAMPLE_S * MIN_SAMPLE_FRAC)
     hard, notes = [], []
-    if frac is not None and frac < HASHRATE_MIN_FRAC:
+    if frac is not None and frac < min_frac:
         hard.append(msg("underpowered", pct=round(frac * 100)))
     if m["error_pct"] >= ERROR_MAX_PCT:
         hard.append(msg("unstable", err=round(m["error_pct"], 2)))
@@ -1031,8 +1086,15 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
              asic_temp_max=m["asic_temp_max"], vr_temp_max=m["vr_temp_max"], settle_s=settle_s,
              not_settled=not_settled, dvalid=m["dvalid"], dinvalid=m["dinvalid"], samples=m["samples"],
              dur=m["dur"], valid=valid, reason=(hard + notes) or [msg("ok")], stage=3,
+             noise_cv=round(cv, 4) if cv is not None else None, min_frac=min_frac, window_extended=extended,
+             frac_valid_hits=round(frac_hits, 4) if frac_hits is not None else None,
              point_s=round((settle_s or WARMUP_MAX_S) + m["dur"], 1),
              wall_power_source=(wall_srcs.pop() if len(wall_srcs) == 1 else "mixed") if wall_srcs else None)
+    if exp:
+        log(f"    [{label}] window mean {m['hashrate_local_ths']:.3f} TH/s = {frac * 100:.1f}% of expected {exp:.3f} "
+            f"(valid hits {_n(frac_hits * 100 if frac_hits is not None else None, 0)}%), noise cv {_n(cv * 100 if cv is not None else None, 1)}% "
+            f"-> threshold {min_frac * 100:.0f}% ({'noisy' if is_noisy(cv) else 'clean'}) -> "
+            f"{'fully supplied' if frac >= min_frac else 'UNDERPOWERED'}")
     log(f"  => {label:<10} mv={_n(r['measured_mv'])} settle={_n(settle_s, 0)}s dur={m['dur']:.0f}s hits={m['dvalid']}  "
         f"local={_n(m['hashrate_local_ths'], 3)} TH/s ({'%.0f%%' % (frac * 100) if frac else 'n/a'} exp.)  "
         f"wall={_n(m['wall_avg'], 1)} W ({r['wall_power_source']})  J/TH={_n(m['jth_local'], 2)}  err={_n(m['error_pct'], 2)}%  "
@@ -1187,7 +1249,7 @@ def setup_and_calibrate(st, p, d):
                relative_config={k: globals()[k] for k in [
                    "FREQ_LOW_PCT", "FREQ_HIGH_PCT", "ALLOW_ABOVE_STOCK", "FREQ_STEP_FACTOR", "MV_STEP_FACTOR",
                    "FLOOR_PCT", "START_PCT", "START_MARGIN_STEPS", "WINDOW_MIN_S", "TARGET_HITS", "WINDOW_MAX_S",
-                   "ERROR_MAX_PCT", "HASHRATE_MIN_FRAC", "INPUT_V_MIN_FRAC", "EARLY_ABORT", "VERIFY_TOL_FRAC", "FREQ_VERIFY_TOL_MHZ", "SETTLE_MA_TOL_FRAC", "WARMUP_MAX_S",
+                   "ERROR_MAX_PCT", "HASHRATE_MIN_FRAC", "HASHRATE_MIN_FRAC_NOISY", "NOISE_CV_HIGH", "INPUT_V_MIN_FRAC", "EARLY_ABORT", "VERIFY_TOL_FRAC", "FREQ_VERIFY_TOL_MHZ", "SETTLE_MA_TOL_FRAC", "WARMUP_MAX_S",
                    "JOBCAL_ALT_FACTOR"]},
                original_job_interval_ms=p["job_interval_ms"])
     if p["mining_enabled"] is not True:

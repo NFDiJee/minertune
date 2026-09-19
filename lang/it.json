@@ -318,6 +318,7 @@
  "code.early_abort_warmup": "arresto anticipato: tensione insufficiente {pct} % dell'atteso dopo il riscaldamento (stabilizzato {settle_s} s)",
  "code.early_abort_warmup_unsettled": "arresto anticipato: tensione insufficiente {pct} % dell'atteso dopo il riscaldamento (non stabilizzato)",
  "code.early_abort_window_hashrate": "arresto anticipato nella finestra: {pct} % dell'atteso (media 60 s) dopo {secs} s",
+ "code.early_abort_window_noisy": "interruzione anticipata nella finestra: {pct} % dell'atteso (media di {avg_s} s, segnale rumoroso) dopo {secs} s",
  "code.early_abort_window_error": "arresto anticipato nella finestra: errore {err} % dopo {secs} s",
  "code.underpowered": "tensione insufficiente: {pct} % dell'atteso",
  "code.unstable": "instabile: errore {err} %",

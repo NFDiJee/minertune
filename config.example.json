@@ -22,6 +22,8 @@
   "freq_verify_tol_mhz": 2,
   "settle_ma_tol_frac": 0.05,
   "warmup_max_s": 90,
+  "hashrate_min_frac_noisy": 0.85,
+  "noise_cv_high": 0.08,
   "history_max": 50,
   "history_keep_failed": true,
   "language": "en"

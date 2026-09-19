@@ -317,6 +317,7 @@
  "code.early_abort_warmup": "early abort: underpowered {pct} % of expected after warmup (settled {settle_s} s)",
  "code.early_abort_warmup_unsettled": "early abort: underpowered {pct} % of expected after warmup (not settled)",
  "code.early_abort_window_hashrate": "early abort in window: {pct} % of expected (60 s average) after {secs} s",
+ "code.early_abort_window_noisy": "early abort in window: {pct} % of expected ({avg_s} s average, noisy signal) after {secs} s",
  "code.early_abort_window_error": "early abort in window: error {err} % after {secs} s",
  "code.underpowered": "underpowered: {pct} % of expected",
  "code.unstable": "unstable: error {err} %",

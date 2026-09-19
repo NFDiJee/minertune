@@ -318,6 +318,7 @@
  "code.early_abort_warmup": "arrêt anticipé : tension insuffisante {pct} % de l'attendu après le préchauffage (stabilisé {settle_s} s)",
  "code.early_abort_warmup_unsettled": "arrêt anticipé : tension insuffisante {pct} % de l'attendu après le préchauffage (non stabilisé)",
  "code.early_abort_window_hashrate": "arrêt anticipé dans la fenêtre : {pct} % de l'attendu (moyenne 60 s) après {secs} s",
+ "code.early_abort_window_noisy": "arrêt anticipé dans la fenêtre : {pct} % de l'attendu (moyenne sur {avg_s} s, signal bruité) après {secs} s",
  "code.early_abort_window_error": "arrêt anticipé dans la fenêtre : erreur {err} % après {secs} s",
  "code.underpowered": "tension insuffisante : {pct} % de l'attendu",
  "code.unstable": "instable : erreur {err} %",

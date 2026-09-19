@@ -48,7 +48,8 @@ DEFAULT_CONFIG = {
     "mv_step_factor": 5, "floor_pct": 0.75, "error_max_pct": 2.0, "hashrate_min_frac": 0.90,
     "soft_asic_c": 70, "soft_vr_c": 85, "hard_asic_c": 80, "hard_vr_c": 95, "input_v_min_frac": 0.95,
     "freq_verify_tol_mhz": 2,
-    "settle_ma_tol_frac": 0.05, "warmup_max_s": 90, "history_max": 50, "history_keep_failed": True, "language": "en",
+    "settle_ma_tol_frac": 0.05, "warmup_max_s": 90, "history_max": 50, "history_keep_failed": True,
+    "hashrate_min_frac_noisy": 0.85, "noise_cv_high": 0.08, "language": "en",
 }
 PLAN_KEYS = ["freq_low_pct", "freq_high_pct", "allow_above_stock", "freq_step_factor", "mv_step_factor", "floor_pct"]
 MAX_BODY = 64 * 1024

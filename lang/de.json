@@ -317,6 +317,7 @@
  "code.early_abort_warmup": "Fruehabbruch: unterversorgt {pct} % der Erwartung nach Warmup (eingeschwungen {settle_s} s)",
  "code.early_abort_warmup_unsettled": "Fruehabbruch: unterversorgt {pct} % der Erwartung nach Warmup (nicht eingeschwungen)",
  "code.early_abort_window_hashrate": "Fruehabbruch im Fenster: {pct} % der Erwartung (60-s-Mittel) nach {secs} s",
+ "code.early_abort_window_noisy": "Frühabbruch im Fenster: {pct} % der Erwartung ({avg_s}-s-Mittel, verrauschtes Signal) nach {secs} s",
  "code.early_abort_window_error": "Fruehabbruch im Fenster: Fehler {err} % nach {secs} s",
  "code.underpowered": "unterversorgt: {pct} % der Erwartung",
  "code.unstable": "instabil: Fehler {err} %",

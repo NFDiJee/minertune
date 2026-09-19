@@ -318,6 +318,7 @@
  "code.early_abort_warmup": "vroegtijdige afbreking: onvoldoende spanning {pct} % van verwacht na opwarmen (gestabiliseerd {settle_s} s)",
  "code.early_abort_warmup_unsettled": "vroegtijdige afbreking: onvoldoende spanning {pct} % van verwacht na opwarmen (niet gestabiliseerd)",
  "code.early_abort_window_hashrate": "vroegtijdige afbreking in venster: {pct} % van verwacht (60 s-gemiddelde) na {secs} s",
+ "code.early_abort_window_noisy": "vroegtijdige afbreking in venster: {pct} % van verwachting ({avg_s}-s-gemiddelde, ruis in signaal) na {secs} s",
  "code.early_abort_window_error": "vroegtijdige afbreking in venster: fout {err} % na {secs} s",
  "code.underpowered": "onvoldoende spanning: {pct} % van verwacht",
  "code.unstable": "instabiel: fout {err} %",
