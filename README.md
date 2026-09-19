@@ -67,7 +67,8 @@ efficiency, performance, or a target hashrate. Everything runs locally on your L
 - **Best point for a target hashrate:** pick from any finished run and apply it
   (temporarily, or permanently with extra confirmation).
 - **History & export:** every run is stored as JSON; export to CSV, JSON, XLSX and PDF.
-- **Languages:** English and German (auto-discovered from `lang/*.json`; add your own).
+- **Languages:** English (default), German, Spanish, French, Italian, Portuguese, Dutch — switchable in the UI;
+  more languages can be added as a file in `lang/` (see [`lang/GLOSSARY.md`](lang/GLOSSARY.md)).
 - **Themes:** dark/light and accent colors.
 
 ### Screenshots
@@ -152,7 +153,8 @@ automatically uses **8479** and tells you so.
    *Find best point* with a target TH/s to get the recommended point (Vmin + reserve)
    and apply it.
 7. **Export:** CSV / JSON / XLSX / PDF per run from the history.
-8. **Language:** use the language selector in the header (English/German); the choice is
+8. **Language:** use the language selector in the header (English, German, Spanish, French,
+   Italian, Portuguese, Dutch); the choice is
    remembered per browser. The default comes from `language` in `config.json`.
 
 ### Configuration (`config.json`)
@@ -168,7 +170,7 @@ All fields are listed in `config.example.json`. The most important ones:
 | `freq_low_pct`, `floor_pct`, `*_step_factor` | 0.52, 0.75, 25/5 | search band relative to stock |
 | `allow_above_stock`, `freq_high_pct` | `false`, 0.0 | overclocking (gate required) |
 | `soft_*_c` / `hard_*_c` | 70/85, 80/95 | SOFT = discard point, HARD = emergency shutdown |
-| `language` | `en` | default UI language |
+| `language` | `en` | default UI language (`en`, `de`, `es`, `fr`, `it`, `pt`, `nl`) |
 
 After editing, restart the service with `sudo systemctl restart minertune`.
 If you only changed the PIN, `sudo systemctl reload minertune` is enough.
