@@ -56,6 +56,8 @@ KNEE_FACTOR = 1.5 ; COMPROMISE_FRAC = 1.05
 REALISTIC_STEPS = 4      # realistische Stufenzahl je Frequenz (nur Schaetzung)
 # Zeiten
 SAMPLE_S = 5 ; SETTLE_WINDOW_S = 30 ; SETTLE_TOL_FRAC = 0.03 ; WARMUP_MAX_S = 90
+SETTLE_MA_TOL_FRAC = 0.05  # rauschtolerant: Mittel der letzten 30 s vs. der 30 s davor <= 5 % -> settled
+                           # (Thor P2 mit job_interval 100 ms: Momentan-Hashrate schwankt ~+-7 %, Mittel stabil)
 # Dreistufige Punkt-Bewertung
 SETTLE_PRECHECK_S = 25   # Stufe 1: Schnell-Vorabcheck nach 25 s
 PRECHECK_AVG_S = 10      # ... Mittel der letzten ~10 s
@@ -263,6 +265,7 @@ CONFIG_KEYS = {  # config.json-Schluessel -> Modulkonstante
     "error_max_pct": "ERROR_MAX_PCT", "hashrate_min_frac": "HASHRATE_MIN_FRAC", "soft_asic_c": "SOFT_ASIC_C",
     "soft_vr_c": "SOFT_VR_C", "hard_asic_c": "HARD_ASIC_C", "hard_vr_c": "HARD_VR_C",
     "input_v_min_frac": "INPUT_V_MIN_FRAC", "freq_verify_tol_mhz": "FREQ_VERIFY_TOL_MHZ",
+    "settle_ma_tol_frac": "SETTLE_MA_TOL_FRAC", "warmup_max_s": "WARMUP_MAX_S",
 }
 
 
@@ -920,10 +923,25 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
         recent = [x for tt, x in warm if tt >= t - SETTLE_WINDOW_S - 0.5 and isinstance(x, (int, float))]
         if t >= SETTLE_WINDOW_S and len(recent) >= need:
             m = statistics.mean(recent)
+            # a) schnell: alle Rohsamples der letzten 30 s im engen Band (sauber einschwingende Miner, z.B. BS-2)
             if all(abs(x - m) <= SETTLE_TOL_FRAC * m for x in recent):
-                settle_s = round(t, 1)
+                settle_s, settle_how = round(t, 1), "samples"
                 break
+            # b) rauschtolerant: gleitendes Mittel der letzten 30 s vs. der 30 s davor. Gleicht Sample-Rauschen
+            #    aus, echtes Hochkriechen (Mittel steigt deutlich) bleibt "nicht eingeschwungen".
+            ma_now = [x for tt, x in warm if t - SETTLE_WINDOW_S < tt <= t and isinstance(x, (int, float))]
+            ma_prev = [x for tt, x in warm if t - 2 * SETTLE_WINDOW_S < tt <= t - SETTLE_WINDOW_S and isinstance(x, (int, float))]
+            if len(ma_now) >= need - 1 and len(ma_prev) >= need - 1:
+                a, b = statistics.mean(ma_now), statistics.mean(ma_prev)
+                if a > 0 and abs(a - b) <= SETTLE_MA_TOL_FRAC * a:
+                    settle_s, settle_how = round(t, 1), f"moving average {(a - b) / a * 100:+.1f}%"
+                    break
     not_settled = settle_s is None
+    if not precheck_only:
+        if not_settled:
+            log(f"    [{label}] not settled after {_n(warm[-1][0] if warm else 0, 0)}s - using window mean")
+        else:
+            log(f"    [{label}] settled after {settle_s:.0f}s ({settle_how})")
 
     # EARLY_ABORT: Hashrate der letzten SETTLE_WINDOW_S gegen Erwartung
     exp = expected_ths(freq)
@@ -1000,8 +1018,8 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
         hard.append(msg("unstable", err=round(m["error_pct"], 2)))
     if m["samples"] < min_samples:
         hard.append(msg("too_few_samples", n=m["samples"], min=min_samples))
-    if not_settled:
-        hard.append(msg("not_settled"))
+    if not_settled:                 # nur Hinweis: das Fenstermittel ist die belastbare Groesse
+        notes.append(msg("not_settled"))
     if target_hits and m["dvalid"] < target_hits:
         notes.append(msg("hits_capped", hits=m["dvalid"], target=target_hits))
     valid = not hard
@@ -1146,6 +1164,18 @@ def safety_banner_and_selftest(p):
 # ----------------------------------------------------------------------------
 # --run
 # ----------------------------------------------------------------------------
+def calibration_check(c, what):
+    """Kalibrierung braucht nur einen belastbaren Fenster-Mittelwert: scheitert bei fehlender Messung,
+    n/a- bzw. 0-Hashrate, zu hoher Fehlerrate oder zu wenigen Samples - NIE an 'not settled' (nur Hinweis)."""
+    if c.get("status") != "measured" or not c.get("valid") or not c.get("hashrate_local_ths"):
+        why = msg_text(c.get("reason")) or c.get("status")
+        if not c.get("hashrate_local_ths"):
+            why += "; hashrate n/a"
+        raise RuntimeError(f"{what} failed ({why})")
+    if c.get("not_settled"):
+        log(f"  {what}: not settled - GH_PER_MHZ from the window mean {c['hashrate_local_ths']:.3f} TH/s (info, no error)")
+
+
 def setup_and_calibrate(st, p, d):
     """Vorbedingungen, Sicherungs-Selbsttest, Job-Intervall- und Hashrate-Kalibrierung (gemeinsam fuer alle Modi)."""
     global GH_PER_MHZ
@@ -1157,7 +1187,7 @@ def setup_and_calibrate(st, p, d):
                relative_config={k: globals()[k] for k in [
                    "FREQ_LOW_PCT", "FREQ_HIGH_PCT", "ALLOW_ABOVE_STOCK", "FREQ_STEP_FACTOR", "MV_STEP_FACTOR",
                    "FLOOR_PCT", "START_PCT", "START_MARGIN_STEPS", "WINDOW_MIN_S", "TARGET_HITS", "WINDOW_MAX_S",
-                   "ERROR_MAX_PCT", "HASHRATE_MIN_FRAC", "INPUT_V_MIN_FRAC", "EARLY_ABORT", "VERIFY_TOL_FRAC", "FREQ_VERIFY_TOL_MHZ",
+                   "ERROR_MAX_PCT", "HASHRATE_MIN_FRAC", "INPUT_V_MIN_FRAC", "EARLY_ABORT", "VERIFY_TOL_FRAC", "FREQ_VERIFY_TOL_MHZ", "SETTLE_MA_TOL_FRAC", "WARMUP_MAX_S",
                    "JOBCAL_ALT_FACTOR"]},
                original_job_interval_ms=p["job_interval_ms"])
     if p["mining_enabled"] is not True:
@@ -1181,13 +1211,11 @@ def setup_and_calibrate(st, p, d):
     print("=" * 80)
     c1 = measure_point(ref_f, ref_mv, f"cal-{orig}", p, CAL_WINDOW_S, 0, CAL_WINDOW_S)
     add_result(c1)
-    if c1.get("status") != "measured" or c1.get("not_settled"):
-        raise RuntimeError(f"calibration failed ({msg_text(c1.get('reason'))})")
+    calibration_check(c1, "calibration")
     set_job_interval(alt)
     c2 = measure_point(ref_f, ref_mv, f"cal-{alt}", p, CAL_WINDOW_S, 0, CAL_WINDOW_S)
     add_result(c2)
-    if c2.get("status") != "measured" or c2.get("not_settled"):
-        raise RuntimeError(f"calibration of alternative failed ({msg_text(c2.get('reason'))})")
+    calibration_check(c2, "calibration of alternative")
     h1, h2 = c1["hashrate_local_ths"], c2["hashrate_local_ths"]
     if h2 >= h1 * (1 + JOBCAL_GAIN_FRAC):
         job, h_ref = alt, h2
