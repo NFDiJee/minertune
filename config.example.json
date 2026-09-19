@@ -22,5 +22,7 @@
   "freq_verify_tol_mhz": 2,
   "settle_ma_tol_frac": 0.05,
   "warmup_max_s": 90,
+  "history_max": 50,
+  "history_keep_failed": true,
   "language": "en"
 }

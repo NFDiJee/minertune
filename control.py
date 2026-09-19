@@ -48,7 +48,7 @@ DEFAULT_CONFIG = {
     "mv_step_factor": 5, "floor_pct": 0.75, "error_max_pct": 2.0, "hashrate_min_frac": 0.90,
     "soft_asic_c": 70, "soft_vr_c": 85, "hard_asic_c": 80, "hard_vr_c": 95, "input_v_min_frac": 0.95,
     "freq_verify_tol_mhz": 2,
-    "settle_ma_tol_frac": 0.05, "warmup_max_s": 90, "language": "en",
+    "settle_ma_tol_frac": 0.05, "warmup_max_s": 90, "history_max": 50, "history_keep_failed": True, "language": "en",
 }
 PLAN_KEYS = ["freq_low_pct", "freq_high_pct", "allow_above_stock", "freq_step_factor", "mv_step_factor", "floor_pct"]
 MAX_BODY = 64 * 1024
@@ -346,10 +346,17 @@ def validate_new_pin(new_pin):
 def write_pin_to_config(new_pin, path=None, update_runtime=True):
     """Nur control_pin in config.json ersetzen (uebrige Felder unveraendert), atomar via Temp-Datei + rename,
     danach Laufzeit-Konfig aktualisieren -> neuer PIN gilt sofort, ohne Neustart."""
+    write_config_fields({"control_pin": new_pin}, path)
+    if update_runtime:
+        CFG["control_pin"] = new_pin
+
+
+def write_config_fields(updates, path=None):
+    """Nur die genannten Felder in config.json ersetzen (uebrige unveraendert), atomar, Rechte 0600."""
     path = path or CONFIG_PATH["path"]
     with open(path, encoding="utf-8") as f:
         on_disk = json.load(f)
-    on_disk["control_pin"] = new_pin
+    on_disk.update(updates)
     tmp = path + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)   # PIN-Datei nur fuer den Besitzer lesbar
     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -358,8 +365,6 @@ def write_pin_to_config(new_pin, path=None, update_runtime=True):
         os.fsync(f.fileno())
     os.replace(tmp, path)
     os.chmod(path, 0o600)
-    if update_runtime:
-        CFG["control_pin"] = new_pin
 
 
 def reload_pin_from_file():
@@ -488,6 +493,10 @@ def sweep_worker(req, cid="default"):
                 sf.log(f"Run JSON saved: {sf.RUN_PATH}")
             except Exception as e:
                 sf.log(f"!!! Run JSON could not be saved: {e}")
+            try:
+                after_run_saved(sf.RUN_PATH)
+            except Exception as e:
+                sf.log(f"!!! History cleanup failed: {e}")
             sf.publish_live(idx=None, phase="idle")
             clog(f"Sweep finished: status {sf.RUN.get('status')}, restored={sf.RUN.get('restored')}")
 
@@ -736,6 +745,90 @@ def load_run(run_id):
         return json.load(f)
 
 
+def run_is_failed(d):
+    """Fehl-Lauf = kein einziger gueltiger Messpunkt (Kalibrierpunkte zaehlen nicht), z.B. error/stopped mit 0/0.
+    Gestoppte oder abgebrochene Laeufe MIT gueltigen Punkten gelten nicht als Fehl-Lauf und bleiben erhalten."""
+    pts = d.get("points") if isinstance(d, dict) else None
+    return not any(isinstance(q, dict) and q.get("valid") and not str(q.get("label", "")).startswith("cal-")
+                   for q in (pts or []))
+
+
+def _run_file(run_id):
+    """Pfad-sicher: nur runs/<basename>.json. -> (pfad, None) oder (None, grund)."""
+    rid = str(run_id or "")
+    if rid.endswith(".json"):
+        rid = rid[:-5]
+    if not RUN_ID_RE.match(rid) or rid.startswith("live_state"):
+        return None, "invalid_id"
+    runs_dir = os.path.realpath(RUNS_DIR)
+    path = os.path.realpath(os.path.join(runs_dir, rid + ".json"))
+    if os.path.dirname(path) != runs_dir or not path.endswith(".json"):
+        return None, "invalid_id"
+    if not os.path.isfile(path):
+        return None, "not_found"
+    return path, None
+
+
+def _protected_run_path():
+    """Datei des gerade laufenden Sweeps - wird nie geloescht, solange er laeuft."""
+    return os.path.realpath(sf.RUN_PATH) if sweep_running() else None
+
+
+def delete_runs(ids):
+    deleted, skipped = [], []
+    prot = _protected_run_path()
+    for rid in ids:
+        path, why = _run_file(rid)
+        if path and path == prot:
+            path, why = None, "running"
+        if not path:
+            skipped.append({"id": str(rid), "reason": why})
+            continue
+        os.remove(path)
+        deleted.append(os.path.splitext(os.path.basename(path))[0])
+    if deleted:
+        clog(f"History: deleted {len(deleted)} run(s): {', '.join(deleted)}")
+    return {"deleted": deleted, "skipped": skipped}
+
+
+def _load_path(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def clear_runs(only_failed=False):
+    ids = []
+    for f in run_files():
+        if only_failed:
+            d = _load_path(f)
+            if d is None or not run_is_failed(d):
+                continue
+        ids.append(os.path.splitext(os.path.basename(f))[0])
+    return delete_runs(ids)
+
+
+def prune_history(history_max=None):
+    """Ringspeicher: mehr als history_max Run-Dateien -> die AELTESTEN loeschen. 0 = unbegrenzt."""
+    n = int(CFG.get("history_max", 0) if history_max is None else history_max)
+    files = run_files()                       # neueste zuerst
+    if n <= 0 or len(files) <= n:
+        return {"deleted": [], "skipped": []}
+    return delete_runs([os.path.splitext(os.path.basename(f))[0] for f in files[n:]])
+
+
+def after_run_saved(path):
+    """Nach JEDEM abgeschlossenen Lauf: Fehl-Lauf ggf. verwerfen (history_keep_failed=false), dann Ringspeicher."""
+    if not CFG.get("history_keep_failed", True) and os.path.isfile(path):
+        d = _load_path(path)
+        if d is not None and run_is_failed(d):
+            os.remove(path)
+            clog(f"History: failed run not kept (history_keep_failed=false): {os.path.basename(path)}")
+    prune_history()
+
+
 def run_summary(path):
     rid = os.path.splitext(os.path.basename(path))[0]
     try:
@@ -748,6 +841,7 @@ def run_summary(path):
             "timestamp": d.get("timestamp"), "finished_at": d.get("finished_at"), "status": d.get("status"),
             "profile": d.get("profile"), "profile_id": d.get("profile_id"), "points": len(pts),
             "valid_points": sum(1 for q in pts if q.get("valid")), "gh_per_mhz": d.get("gh_per_mhz"),
+            "failed": run_is_failed(d),
             "sweet_spots": d.get("sweet_spots"), "restored": d.get("restored"),
             "mtime": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(os.path.getmtime(path)))}
 
@@ -986,7 +1080,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/subnets":
                 return self._send(200, {"subnets": local_subnets()})
             if path == "/runs":
-                return self._send(200, {"runs": [run_summary(f) for f in run_files()]})
+                return self._send(200, {"runs": [run_summary(f) for f in run_files()],
+                                        "history_max": CFG.get("history_max", 0),
+                                        "history_keep_failed": CFG.get("history_keep_failed", True)})
             m = re.match(r"^/runs/([^/]+)$", path)
             if m:
                 d = load_run(m.group(1))
@@ -1042,7 +1138,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._plan(body)
             # --- alle anderen schreibenden Aktionen: PIN ---
             if path in ("/connect", "/sweep/start", "/sweep/stop", "/point/set", "/mining/resume",
-                        "/identify"):
+                        "/identify", "/runs/delete", "/runs/clear", "/history/settings"):
                 err = self._pin_ok()
                 if err:
                     txt = {"pin_not_set": "Control PIN not set yet - set it in the UI under 'Set control PIN'",
@@ -1056,6 +1152,37 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             traceback.print_exc()
             return self._send(500, {"error": f"{type(e).__name__}: {e}"})
+
+    def _post_runs_delete(self, body):
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not ids or not all(isinstance(x, str) for x in ids) or len(ids) > 1000:
+            return self._send(400, err("bad_ids", "ids: non-empty list of run ids required"))
+        return self._send(200, delete_runs(ids))
+
+    def _post_runs_clear(self, body):
+        if body.get("confirm") is not True:       # "Alle loeschen" nur mit expliziter Bestaetigung
+            return self._send(400, err("confirm_required", "confirm=true required"))
+        return self._send(200, clear_runs(bool(body.get("only_failed", False))))
+
+    def _post_history_settings(self, body):
+        upd = {}
+        if "history_max" in body:
+            v = body["history_max"]
+            if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v <= 10000:
+                return self._send(400, err("bad_history_max", "history_max must be an integer 0..10000 (0 = unlimited)"))
+            upd["history_max"] = v
+        if "history_keep_failed" in body:
+            if not isinstance(body["history_keep_failed"], bool):
+                return self._send(400, err("bad_history_keep_failed", "history_keep_failed must be true/false"))
+            upd["history_keep_failed"] = body["history_keep_failed"]
+        if not upd:
+            return self._send(400, err("bad_body", "nothing to change"))
+        write_config_fields(upd)
+        CFG.update(upd)
+        clog(f"History settings changed: {upd}")
+        pruned = prune_history() if "history_max" in upd else {"deleted": [], "skipped": []}
+        return self._send(200, {"history_max": CFG["history_max"], "history_keep_failed": CFG["history_keep_failed"],
+                                "pruned": pruned["deleted"]})
 
     def _best_for(self, body):
         rid = str(body.get("run_id") or "")
@@ -1528,6 +1655,9 @@ pre.log { background: var(--card-2); border: 1px solid var(--card-border); borde
   overflow: auto; font-size: 12px; margin: 0; white-space: pre; color: var(--muted); }
 details.logbox { position: relative; }
 .logbtns { position: absolute; top: -3px; right: 0; display: flex; gap: 6px; }
+.histbar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-bottom: 12px; }
+.histbar .sep { flex: 1 1 auto; }
+.run-sel { margin-right: 8px; vertical-align: middle; }
 .clip { display: inline-block; max-width: 440px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .pill.skip { background: var(--st-wait-bg); color: var(--st-wait-fg); opacity: .7; }
 tr.s-skip td { color: var(--st-wait-fg); opacity: .6; }
@@ -1751,7 +1881,21 @@ tr.sub.s-ok td { background: var(--st-ok-bg); }
     <!-- HISTORY -->
     <section class="card">
       <div class="card-h"><h2 data-i18n="card.history.title">History</h2><span class="sub" id="hist_sub"></span></div>
-      <div class="card-b"><div class="runs" id="hist"></div></div>
+      <div class="card-b">
+        <div class="histbar">
+          <label class="check"><input type="checkbox" id="hist_all"> <span data-i18n="hist.select_all">Select all</span></label>
+          <span class="needpin" style="display:none"><button type="button" id="hist_del_sel" class="btn ghost small" data-i18n="hist.delete_selected">Delete selected</button></span>
+          <span class="sep"></span>
+          <span class="needpin" style="display:none"><button type="button" id="hist_del_failed" class="btn ghost small" data-i18n="hist.delete_failed">Delete failed runs only</button>
+          <button type="button" id="hist_del_all" class="btn ghost small" data-i18n="hist.delete_all">Delete all</button></span>
+        </div>
+        <div class="histbar muted" style="font-size:12.5px">
+          <label class="field"><span data-i18n="hist.max_label">Keep at most (runs)</span><input id="hist_max" type="number" min="0" max="10000" step="1" style="width:90px"></label>
+          <label class="check" data-i18n-title="hist.keep_failed_hint"><input type="checkbox" id="hist_keep_failed"> <span data-i18n="hist.keep_failed">Keep failed runs</span></label>
+          <span class="needpin" style="display:none"><button type="button" id="hist_max_save" class="btn ghost small" data-i18n="hist.max_save">Save</button></span>
+          <span id="hist_max_info"></span>
+        </div>
+        <div class="runs" id="hist"></div></div>
     </section>
 
   </div>
@@ -2046,12 +2190,14 @@ window.addEventListener("resize",redrawChart);
 const SSKEY={efficiency:"ss.efficiency",knee:"ss.knee",compromise:"ss.compromise",target:"ss.target"};
 let histBusy=false;
 async function loadHist(){if(histBusy)return;histBusy=true;try{const j=await api("GET","/runs");$("hist_sub").textContent=t("hist.count",{n:j.runs.length});
+  if(document.activeElement!==$("hist_max"))$("hist_max").value=j.history_max??"";$("hist_keep_failed").checked=j.history_keep_failed!==false;
+  $("hist_max_info").textContent=j.history_max>0?t("hist.max_info",{n:j.history_max}):t("hist.max_unlimited");$("hist_all").checked=false;
   $("hist").innerHTML=j.runs.map(r=>{const S=r.sweet_spots||{};const short=String(r.run_tag||r.id).includes("kurz");
     const badge=short?`<span class="badge short">${t("hist.badge_short")}</span>`:r.status==="finished"?`<span class="badge fin">${t("hist.badge_done")}</span>`:`<span class="badge other">${esc(runst(r.status))}</span>`;
     const ss=Object.keys(SSKEY).filter(k=>S[k]).map(k=>`<div class="subcard${k==="efficiency"?" best":""}"><div class="k">${t(SSKEY[k])}</div><div class="v">${S[k].freq} MHz / ${S[k].mv} mV</div>
       <div class="d">${F.ths(S[k].hashrate_local_ths)} TH/s · ${F.w(S[k].wall_avg)} W · ${F.jth(S[k].jth_local)} J/TH</div></div>`).join("");
     const rid=esc(r.id);
-    return `<div class="subcard"><div class="run-h"><div><div class="title">${rid} ${badge}</div>
+    return `<div class="subcard"><div class="run-h"><div><div class="title"><input type="checkbox" class="run-sel" data-run="${rid}" aria-label="${rid}">${rid} ${badge}${r.failed?` <span class="badge other">${t("hist.badge_failed")}</span>`:""}</div>
       <div class="muted" style="font-size:12.5px">${esc(r.timestamp||"")} → ${esc(r.finished_at||"")}${r.sweep_mode?" · "+t("mode."+r.sweep_mode):""} · ${t("hist.valid_of",{a:r.valid_points,b:r.points})}${r.profile?" · "+esc(r.profile):""}</div></div>
       <div class="row">${["csv","json","xlsx","pdf"].map(x=>`<a class="btn ghost small" href="/export/${encodeURIComponent(r.id)}.${x}">${x.toUpperCase()}</a>`).join("")}</div></div>
       ${short?`<div class="note warn" style="margin-bottom:10px" title="${esc(r.note||"")}">${t("hist.short_note")}</div>`:(r.note?`<div class="note warn" style="margin-bottom:10px">${esc(r.note)}</div>`:"")}
@@ -2063,6 +2209,22 @@ async function loadHist(){if(histBusy)return;histBusy=true;try{const j=await api
   document.querySelectorAll(".bf-btn").forEach(b=>b.onclick=()=>bestFor(b.dataset.run));
   document.querySelectorAll(".bf-in").forEach(i=>i.onkeydown=e=>{if(e.key==="Enter")bestFor(i.dataset.run)});}
   catch(e){$("hist").textContent=trErr(e)}finally{histBusy=false}}
+
+/* ================= Historie verwalten (Loeschen/Ringspeicher: PIN) ================= */
+function selRuns(){return [...document.querySelectorAll(".run-sel")].filter(c=>c.checked).map(c=>c.dataset.run)}
+async function histAction(path,body,confirmText){if(!confirm(confirmText))return;
+  try{const r=await api("POST",path,body,true);toast(t("hist.deleted",{n:r.deleted.length}),false)}
+  catch(e){toast(trErr(e),true)}histBusy=false;loadHist();}
+$("hist_all").onchange=()=>document.querySelectorAll(".run-sel").forEach(c=>c.checked=$("hist_all").checked);
+$("hist_del_sel").onclick=()=>{const ids=selRuns();if(!ids.length){toast(t("hist.none_selected"),true);return}
+  histAction("/runs/delete",{ids},t("hist.confirm_delete_selected",{n:ids.length}))};
+$("hist_del_failed").onclick=()=>histAction("/runs/clear",{only_failed:true,confirm:true},t("hist.confirm_delete_failed"));
+$("hist_del_all").onclick=()=>histAction("/runs/clear",{confirm:true},t("hist.confirm_delete_all"));
+$("hist_max_save").onclick=async()=>{const n=Number($("hist_max").value);
+  if(!Number.isInteger(n)||n<0||n>10000){toast(t("hist.max_label")+": 0–10000",true);return}
+  try{const r=await api("POST","/history/settings",{history_max:n,history_keep_failed:$("hist_keep_failed").checked},true);
+    toast(r.pruned.length?t("hist.deleted",{n:r.pruned.length}):t("hist.max_info",{n:r.history_max||"∞"}),false)}
+  catch(e){toast(trErr(e),true)}histBusy=false;loadHist();};
 
 /* ================= Ziel-Hashrate: besten Punkt finden (lesend) + uebernehmen (PIN) ================= */
 const ROLEKEY={reserve_recommended:"bf.role.reserve_recommended",vmin_no_reserve:"bf.role.vmin_no_reserve",vmin_alternative:"bf.role.vmin_alternative",reserve:"bf.role.reserve",vmin:"bf.role.vmin"};

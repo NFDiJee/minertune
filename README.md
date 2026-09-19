@@ -172,6 +172,8 @@ All fields are listed in `config.example.json`. The most important ones:
 | `soft_*_c` / `hard_*_c` | 70/85, 80/95 | SOFT = discard point, HARD = emergency shutdown |
 | `freq_verify_tol_mhz` | 2 | accepted difference between set and reported frequency (PLL rounding, e.g. 720 → 721) |
 | `settle_ma_tol_frac` / `warmup_max_s` | 0.05 / 90 | settle = 30 s moving averages differ by ≤ 5 % (noise tolerant); max. warmup before measuring anyway |
+| `history_max` | 50 | ring buffer: keep at most this many run files in `runs/` (oldest are deleted after each run; 0 = unlimited). Also adjustable in the History card (PIN) |
+| `history_keep_failed` | `true` | `false` = runs without any valid measurement point are not kept |
 | `language` | `en` | default UI language (`en`, `de`, `es`, `fr`, `it`, `pt`, `nl`) |
 
 After editing, restart the service with `sudo systemctl restart minertune`.
