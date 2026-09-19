@@ -47,7 +47,7 @@ DEFAULT_CONFIG = {
     "freq_low_pct": 0.52, "freq_high_pct": 0.0, "allow_above_stock": False, "freq_step_factor": 25,
     "mv_step_factor": 5, "floor_pct": 0.75, "error_max_pct": 2.0, "hashrate_min_frac": 0.90,
     "soft_asic_c": 70, "soft_vr_c": 85, "hard_asic_c": 80, "hard_vr_c": 95, "input_v_min_frac": 0.95,
-    "language": "en",
+    "freq_verify_tol_mhz": 2, "language": "en",
 }
 PLAN_KEYS = ["freq_low_pct", "freq_high_pct", "allow_above_stock", "freq_step_factor", "mv_step_factor", "floor_pct"]
 MAX_BODY = 64 * 1024
@@ -506,11 +506,8 @@ def set_single_point(freq, mv, save):
     code, text = base.post_json(sf.TUNING, payload)
     time.sleep(1.5)
     st2 = read_status_once()
-    tol = sf.verify_tol(mv, p)
-    meas = st2.get("measured_core_mv")
-    ok = st2.get("current_frequency_mhz") == freq and isinstance(meas, (int, float)) and abs(meas - mv) <= tol
-    clog(f"Single point set: {json.dumps(payload)} -> HTTP {code}; verify f={st2.get('current_frequency_mhz')} "
-         f"mv={meas} -> {'OK' if ok else 'FEHLGESCHLAGEN'}")
+    ok, _, meas, vtext = sf.verify_state(st2, freq, mv, p)
+    clog(f"Single point set: {json.dumps(payload)} -> HTTP {code}; {vtext}")
     return {"payload": payload, "http": code, "response": text.strip(), "verify_ok": ok,
             "current_frequency_mhz": st2.get("current_frequency_mhz"), "measured_core_mv": meas,
             "danger": {"freq_pct": round(df * 100, 1), "mv_pct": round(dm * 100, 1)}}

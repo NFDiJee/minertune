@@ -24,6 +24,7 @@ STATUS = MINER_BASE + "/status" ; TUNING = MINER_BASE + "/tuning" ; MINING = MIN
 HTTP_TIMEOUT = 10
 SAFE_FREQ = 300 ; SAFE_MV = 950
 VERIFY_TOL_MV = 12
+FREQ_VERIFY_TOL_MHZ = 2  # PLL-Rundung (z.B. Thor P2: 720 -> 721) - wie sweep_full.FREQ_VERIFY_TOL_MHZ
 # Temperatur-Sicherheit
 SOFT_ASIC_C = 70.0 ; SOFT_VR_C = 85.0        # Punkt verwerfen + zurueck auf SAFE
 HARD_ASIC_C = 80.0 ; HARD_VR_C = 95.0        # NOTABSCHALTUNG: POST /mining {"enabled":false}, Sweep-Ende
@@ -146,8 +147,11 @@ def set_point(freq, mv, stock_f, stock_mv):
     time.sleep(1.5)
     st = safe_get()
     cur_f, meas = st.get("current_frequency_mhz"), st.get("measured_core_mv")
-    ok = cur_f == freq and isinstance(meas, (int, float)) and abs(meas - mv) <= VERIFY_TOL_MV
-    log(f"  verify: f={cur_f} (Soll {freq}) mv={meas} (Soll {mv} +/-{VERIFY_TOL_MV}) -> {'OK' if ok else 'FEHLGESCHLAGEN'}")
+    f_ok = isinstance(cur_f, (int, float)) and abs(cur_f - freq) <= FREQ_VERIFY_TOL_MHZ
+    mv_ok = isinstance(meas, (int, float)) and abs(meas - mv) <= VERIFY_TOL_MV
+    ok = f_ok and mv_ok
+    log(f"  verify f={cur_f} (target {freq}, tol {FREQ_VERIFY_TOL_MHZ}) {'OK' if f_ok else 'FAILED'} | "
+        f"mv={meas} (target {mv}, tol {VERIFY_TOL_MV}) {'OK' if mv_ok else 'FAILED'}")
     return ok, meas
 
 

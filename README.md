@@ -170,6 +170,7 @@ All fields are listed in `config.example.json`. The most important ones:
 | `freq_low_pct`, `floor_pct`, `*_step_factor` | 0.52, 0.75, 25/5 | search band relative to stock |
 | `allow_above_stock`, `freq_high_pct` | `false`, 0.0 | overclocking (gate required) |
 | `soft_*_c` / `hard_*_c` | 70/85, 80/95 | SOFT = discard point, HARD = emergency shutdown |
+| `freq_verify_tol_mhz` | 2 | accepted difference between set and reported frequency (PLL rounding, e.g. 720 → 721) |
 | `language` | `en` | default UI language (`en`, `de`, `es`, `fr`, `it`, `pt`, `nl`) |
 
 After editing, restart the service with `sudo systemctl restart minertune`.

@@ -48,6 +48,7 @@ SOFT_ASIC_C = 70 ; SOFT_VR_C = 85 ; HARD_ASIC_C = 80 ; HARD_VR_C = 95
 INPUT_V_MIN_FRAC = 0.95  # Input-Voltage-Waechter = gemessene Start-input_voltage_v * 0.95
 EARLY_ABORT = True       # unterversorgten Punkt nach Einschwingen sofort verwerfen
 VERIFY_TOL_FRAC = 0.012  # Verify: |measured - soll| <= max(2 * core_step, soll * 0.012)
+FREQ_VERIFY_TOL_MHZ = 2  # Verify Frequenz: |gemeldet - soll| <= 2 MHz (PLL-Rundung, z.B. Thor P2/BM1373: 720 -> 721)
 DANGER_PCT = 0.15        # Firmware-Regel: >15 % Abstand zu Stock -> danger_acknowledged
 JOBCAL_ALT_FACTOR = 0.5  # Job-Intervall-Test: Alternative = Original * 0.5
 JOBCAL_GAIN_FRAC = 0.03
@@ -261,7 +262,7 @@ CONFIG_KEYS = {  # config.json-Schluessel -> Modulkonstante
     "freq_step_factor": "FREQ_STEP_FACTOR", "mv_step_factor": "MV_STEP_FACTOR", "floor_pct": "FLOOR_PCT",
     "error_max_pct": "ERROR_MAX_PCT", "hashrate_min_frac": "HASHRATE_MIN_FRAC", "soft_asic_c": "SOFT_ASIC_C",
     "soft_vr_c": "SOFT_VR_C", "hard_asic_c": "HARD_ASIC_C", "hard_vr_c": "HARD_VR_C",
-    "input_v_min_frac": "INPUT_V_MIN_FRAC",
+    "input_v_min_frac": "INPUT_V_MIN_FRAC", "freq_verify_tol_mhz": "FREQ_VERIFY_TOL_MHZ",
 }
 
 
@@ -619,6 +620,19 @@ def verify_tol(mv, p):
     return max(2 * p["core_step"], mv * VERIFY_TOL_FRAC)
 
 
+def verify_state(st, freq, mv, p):
+    """Akzeptanzpruefung nach POST /tuning -> (ok, gemeldete Frequenz, gemessene Spannung, Logtext).
+    Frequenz mit Toleranz FREQ_VERIFY_TOL_MHZ (die PLL trifft nicht jede MHz exakt), Spannung mit verify_tol.
+    Nur die Pruefung ist tolerant - aufgezeichnet werden weiterhin die real gemeldeten Werte."""
+    cur_f, meas = st.get("current_frequency_mhz"), st.get("measured_core_mv")
+    tol = verify_tol(mv, p)
+    f_ok = isinstance(cur_f, (int, float)) and abs(cur_f - freq) <= FREQ_VERIFY_TOL_MHZ
+    mv_ok = isinstance(meas, (int, float)) and abs(meas - mv) <= tol
+    text = (f"verify f={cur_f} (target {freq}, tol {FREQ_VERIFY_TOL_MHZ:g}) {'OK' if f_ok else 'FAILED'} | "
+            f"mv={meas} (target {mv}, tol {tol:.0f}) {'OK' if mv_ok else 'FAILED'}")
+    return f_ok and mv_ok, cur_f, meas, text
+
+
 # ----------------------------------------------------------------------------
 # Plan
 # ----------------------------------------------------------------------------
@@ -799,11 +813,10 @@ def set_point(freq, mv, p):
     code, text = base.post_json(TUNING, payload)
     time.sleep(1.5)
     st = base.safe_get()
-    cur_f, meas = st.get("current_frequency_mhz"), st.get("measured_core_mv")
-    tol = verify_tol(mv, p)
-    ok = cur_f == freq and isinstance(meas, (int, float)) and abs(meas - mv) <= tol
+    ok, cur_f, meas, vtext = verify_state(st, freq, mv, p)
+    STATE["last_verify"] = {"freq": cur_f, "mv": meas, "ok": ok}
     log(f"  set {freq}/{mv} (Danger f {df * 100:.1f}% mv {dm * 100:.1f}% -> {danger}) HTTP {code} {text.strip()} "
-        f"| verify f={cur_f} mv={meas} (tol {tol:.0f}) -> {'OK' if ok else 'FAILED'}")
+        f"| {vtext}")
     return ok, meas
 
 
@@ -869,6 +882,7 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
     publish_live(idx=len(LIVE["results"]), frequency_mhz=freq, core_mv=mv, phase="setting", elapsed_s=0,
                  remaining_s=0, avg={"samples": 0})
     ok, meas = set_point(freq, mv, p)
+    r["measured_freq_mhz"] = (STATE.get("last_verify") or {}).get("freq")   # real gemeldete Frequenz (z.B. 721)
     if not ok:
         return dict(r, status="verify_failed", valid=False, reason=msg("verify_failed"), measured_mv=meas)
 
@@ -1143,7 +1157,7 @@ def setup_and_calibrate(st, p, d):
                relative_config={k: globals()[k] for k in [
                    "FREQ_LOW_PCT", "FREQ_HIGH_PCT", "ALLOW_ABOVE_STOCK", "FREQ_STEP_FACTOR", "MV_STEP_FACTOR",
                    "FLOOR_PCT", "START_PCT", "START_MARGIN_STEPS", "WINDOW_MIN_S", "TARGET_HITS", "WINDOW_MAX_S",
-                   "ERROR_MAX_PCT", "HASHRATE_MIN_FRAC", "INPUT_V_MIN_FRAC", "EARLY_ABORT", "VERIFY_TOL_FRAC",
+                   "ERROR_MAX_PCT", "HASHRATE_MIN_FRAC", "INPUT_V_MIN_FRAC", "EARLY_ABORT", "VERIFY_TOL_FRAC", "FREQ_VERIFY_TOL_MHZ",
                    "JOBCAL_ALT_FACTOR"]},
                original_job_interval_ms=p["job_interval_ms"])
     if p["mining_enabled"] is not True:

@@ -19,5 +19,6 @@
   "hard_asic_c": 80,
   "hard_vr_c": 95,
   "input_v_min_frac": 0.95,
+  "freq_verify_tol_mhz": 2,
   "language": "en"
 }
