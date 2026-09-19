@@ -341,5 +341,7 @@
  "hint.gate_prefix": "GATE:",
  "footer.made_by": "feito por NFDiJee",
  "footer.license": "Licença MIT",
- "footer.source": "Código-fonte no GitHub"
+ "footer.source": "Código-fonte no GitHub",
+ "risk.title": "Utilização por sua conta e risco",
+ "risk.text": "O MinerTune altera as definições de tensão e relógio – uma utilização incorreta pode danificar o seu miner. Sem garantia."
 }

@@ -340,5 +340,7 @@
  "hint.gate_prefix": "GATE:",
  "footer.made_by": "entwickelt von NFDiJee",
  "footer.license": "MIT-Lizenz",
- "footer.source": "Quellcode auf GitHub"
+ "footer.source": "Quellcode auf GitHub",
+ "risk.title": "Nutzung auf eigene Gefahr",
+ "risk.text": "MinerTune veraendert Spannungs- und Takteinstellungen – falsche Nutzung kann den Miner beschaedigen. Keine Gewaehr."
 }

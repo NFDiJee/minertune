@@ -341,5 +341,7 @@
  "hint.gate_prefix": "GATE:",
  "footer.made_by": "gemaakt door NFDiJee",
  "footer.license": "MIT-licentie",
- "footer.source": "Broncode op GitHub"
+ "footer.source": "Broncode op GitHub",
+ "risk.title": "Gebruik op eigen risico",
+ "risk.text": "MinerTune wijzigt spannings- en klokinstellingen – verkeerd gebruik kan je miner beschadigen. Geen garantie."
 }

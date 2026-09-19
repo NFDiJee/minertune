@@ -340,5 +340,7 @@
  "hint.gate_prefix": "GATE:",
  "footer.made_by": "made by NFDiJee",
  "footer.license": "MIT License",
- "footer.source": "Source code on GitHub"
+ "footer.source": "Source code on GitHub",
+ "risk.title": "Use at your own risk",
+ "risk.text": "MinerTune changes voltage/clock settings – incorrect use can damage your miner. No warranty."
 }

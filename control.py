@@ -1305,6 +1305,7 @@ body {
 .foot { margin-top: 28px; text-align: center; font-size: 12px; color: var(--muted); }
 .foot a { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
 .foot a:hover { color: var(--accent); }
+.foot-risk { margin-top: 6px; font-size: 11.5px; color: var(--st-act-fg); }
 .stack { display: grid; gap: 18px; }
 .duo { display: grid; gap: 18px; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); align-items: start; }
 @media (max-width: 1320px) { .duo { grid-template-columns: minmax(0, 1fr); } }
@@ -1699,7 +1700,8 @@ tr.sub.s-ok td { background: var(--st-ok-bg); }
   </div>
   <footer class="foot"><a href="https://github.com/NFDiJee/minertune" target="_blank" rel="noopener" data-i18n-title="footer.source">MinerTune</a>
     · <span data-i18n="footer.made_by">made by NFDiJee</span>
-    · <a href="https://github.com/NFDiJee/minertune/blob/main/LICENSE" target="_blank" rel="noopener" data-i18n="footer.license">MIT License</a></footer>
+    · <a href="https://github.com/NFDiJee/minertune/blob/main/LICENSE" target="_blank" rel="noopener" data-i18n="footer.license">MIT License</a>
+    <div class="foot-risk">⚠ <b data-i18n="risk.title">Use at your own risk</b> – <span data-i18n="risk.text">MinerTune changes voltage/clock settings – incorrect use can damage your miner. No warranty.</span></div></footer>
 </div>
 <div id="toast" class="toast"></div>
 <script>

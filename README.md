@@ -1,5 +1,24 @@
 # MinerTune
 
+## ⚠️ USE AT YOUR OWN RISK ⚠️
+
+> [!CAUTION]
+> **MinerTune changes the voltage and clock settings of mining hardware. Incorrect
+> use, overtuning, or hardware/firmware faults can DAMAGE OR DESTROY your miner,
+> void your warranty, and in the worst case create FIRE or ELECTRICAL hazards.**
+>
+> This software is provided **"AS IS", without any warranty** (see [`LICENSE`](LICENSE)).
+> The author (NFDiJee) accepts **NO liability** for any damage, loss, or harm resulting
+> from its use. **You are solely responsible for what you do with your hardware.**
+>
+> - **Undervolting** is the safer direction; tuning **ABOVE stock** increases heat, wear and risk.
+> - **Never** expose the control dashboard to the public internet.
+> - Always keep the **emergency stop** reachable and monitor temperatures (**VR first**).
+> - If you do not understand what frequency/voltage tuning does, do **NOT** use the
+>   "allow above stock" option.
+
+---
+
 **MinerTune** is a self-hosted web control center for tuning ASIC miners that run
 **Harlo-OS** (API v1). It measures your miner point by point, finds the minimum stable
 core voltage (Vmin) for each frequency, and shows the best operating points for
