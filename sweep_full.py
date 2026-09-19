@@ -52,6 +52,8 @@ FREQ_VERIFY_TOL_MHZ = 2  # Verify Frequenz: |gemeldet - soll| <= 2 MHz (PLL-Rund
 DANGER_PCT = 0.15        # Firmware-Regel: >15 % Abstand zu Stock -> danger_acknowledged
 JOBCAL_ALT_FACTOR = 0.5  # Job-Intervall-Test: Alternative = Original * 0.5
 JOBCAL_GAIN_FRAC = 0.03
+JOBCAL_K = 2.0            # Job-Intervall-Wechsel nur bei statistisch signifikantem Gewinn:
+                         # (h_B - h_A) > K * sqrt(seA^2 + seB^2), K ~ Sigma. UND-Bedingung mit JOBCAL_GAIN_FRAC.
 KNEE_FACTOR = 1.5 ; COMPROMISE_FRAC = 1.05
 REALISTIC_STEPS = 4      # realistische Stufenzahl je Frequenz (nur Schaetzung)
 # Zeiten
@@ -206,8 +208,9 @@ MSG_EN = {
     "knee_segment_exceeds": "segment to {freq}/{mv} > {factor} x reference -> knee before it",
     "knee_all_segments_ok": "all segments <= {factor} x reference -> highest Vmin point",
     # Kalibrierung
-    "job_switch": "SWITCH to {ms} ms ({gain_pct:+.1f} %)",
+    "job_switch": "SWITCH to {ms} ms ({gain_pct:+.1f} %, significant, {sigma} sigma)",
     "job_keep": "KEEP {ms} ms ({gain_pct:+.1f} % < {thresh} %)",
+    "job_keep_nosig": "KEEP {ms} ms ({gain_pct:+.1f} %, not significant: {sigma} sigma < {k})",
 }
 
 
@@ -280,6 +283,7 @@ CONFIG_KEYS = {  # config.json-Schluessel -> Modulkonstante
     "input_v_min_frac": "INPUT_V_MIN_FRAC", "freq_verify_tol_mhz": "FREQ_VERIFY_TOL_MHZ",
     "settle_ma_tol_frac": "SETTLE_MA_TOL_FRAC", "warmup_max_s": "WARMUP_MAX_S",
     "hashrate_min_frac_noisy": "HASHRATE_MIN_FRAC_NOISY", "noise_cv_high": "NOISE_CV_HIGH",
+    "jobcal_gain_frac": "JOBCAL_GAIN_FRAC", "jobcal_k": "JOBCAL_K",
 }
 
 
@@ -1243,6 +1247,18 @@ def calibration_check(c, what):
         log(f"  {what}: not settled - GH_PER_MHZ from the window mean {c['hashrate_local_ths']:.3f} TH/s (info, no error)")
 
 
+def _cal_stderr(c):
+    """Standardfehler des Fenster-Mittels einer Kalibrier-Messung: SE = stdev/sqrt(n) = mean * cv / sqrt(n).
+    cv = Rausch-/Variationskoeffizient (noise_cv, aus measure_point). Fehlt cv oder n, konservativ 0 -> die
+    reine Prozentschwelle entscheidet (wie bisher)."""
+    h = c.get("hashrate_local_ths") or 0.0
+    cv = c.get("noise_cv")
+    n = c.get("samples") or 0
+    if not cv or n < 2:
+        return 0.0
+    return h * cv / math.sqrt(n)
+
+
 def setup_and_calibrate(st, p, d):
     """Vorbedingungen, Sicherungs-Selbsttest, Job-Intervall- und Hashrate-Kalibrierung (gemeinsam fuer alle Modi)."""
     global GH_PER_MHZ
@@ -1284,18 +1300,31 @@ def setup_and_calibrate(st, p, d):
     add_result(c2)
     calibration_check(c2, "calibration of alternative")
     h1, h2 = c1["hashrate_local_ths"], c2["hashrate_local_ths"]
-    if h2 >= h1 * (1 + JOBCAL_GAIN_FRAC):
+    se1, se2 = _cal_stderr(c1), _cal_stderr(c2)                    # Standardfehler des jeweiligen Fenster-Mittels
+    sig_sd = math.sqrt(se1 ** 2 + se2 ** 2)                        # kombinierte Unsicherheit der Differenz
+    sigma = (h2 - h1) / sig_sd if sig_sd > 0 else (math.inf if h2 > h1 else 0.0)
+    gain = h2 / h1 - 1 if h1 else 0.0
+    significant = (h2 - h1) > JOBCAL_K * sig_sd
+    # Wechsel nur, wenn der Gewinn PRAKTISCH relevant (> JOBCAL_GAIN_FRAC) UND statistisch signifikant (K Sigma) ist
+    if gain > JOBCAL_GAIN_FRAC and significant:
         job, h_ref = alt, h2
-        decision = msg("job_switch", ms=alt, gain_pct=round((h2 / h1 - 1) * 100, 1))
+        decision = msg("job_switch", ms=alt, gain_pct=round(gain * 100, 1), sigma=round(sigma, 1))
     else:
         job, h_ref = orig, h1
-        decision = msg("job_keep", ms=orig, gain_pct=round((h2 / h1 - 1) * 100, 1), thresh=round(JOBCAL_GAIN_FRAC * 100))
+        if gain > JOBCAL_GAIN_FRAC:                                # praktisch relevant, aber im Rauschen -> nicht wechseln
+            decision = msg("job_keep_nosig", ms=orig, gain_pct=round(gain * 100, 1),
+                           sigma=round(sigma, 1), k=round(JOBCAL_K, 1))
+        else:
+            decision = msg("job_keep", ms=orig, gain_pct=round(gain * 100, 1), thresh=round(JOBCAL_GAIN_FRAC * 100))
         set_job_interval(orig)
         STATE["job_changed"] = False
     GH_PER_MHZ = h_ref * 1000 / ref_f
-    log(f"Job interval: {orig} ms -> {h1:.3f} TH/s | {alt} ms -> {h2:.3f} TH/s => {msg_text(decision)}")
+    log(f"Job interval: {orig} ms = {h1:.3f} TH/s (+/-{se1:.3f}) | {alt} ms = {h2:.3f} TH/s (+/-{se2:.3f}) "
+        f"=> diff {gain * 100:+.1f} % = {sigma:.1f} sigma (K={JOBCAL_K:g}) => {msg_text(decision)}")
     log(f"GH_PER_MHZ = {h_ref * 1000:.1f} / {ref_f} = {GH_PER_MHZ:.2f} GH/s per MHz")
     RUN["calibration"] = {"ref": {"freq": ref_f, "mv": ref_mv}, "h_default_ths": h1, "h_alt_ths": h2,
+                          "se_default_ths": round(se1, 4), "se_alt_ths": round(se2, 4),
+                          "gain_pct": round(gain * 100, 2), "sigma": round(sigma, 2), "significant": significant,
                           "decision": decision, "points": [c1, c2]}
     RUN["gh_per_mhz"], RUN["job_interval_ms"] = GH_PER_MHZ, job
     save_run()
