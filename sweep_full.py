@@ -163,6 +163,9 @@ MSG_EN = {
     "early_abort_window_noisy": "early abort in window: {pct}% of expected ({avg_s} s average, noisy signal) after {secs}s",
     "early_abort_window_error": "early abort in window: error {err}% after {secs}s",
     "underpowered": "underpowered: {pct}% of expected",
+    "below_linear": "below linear expectation: {pct}% of expected (stable, err {err}%) - frequency scales sub-linearly",
+    "freq_unreachable": "frequency not reachable at any voltage {floor}..{top} mV - skipped, trying higher frequency",
+    "eff_stop_skips": "{n} consecutive unreachable frequencies - sweep ended",
     "unstable": "unstable: error {err}%",
     "too_few_samples": "too few samples ({n} < {min})",
     "not_settled": "not settled",
@@ -420,6 +423,8 @@ MID_FRAC = 0.75              # Bandmitte = stock * 0.75 (Grenze Effizienz/Perfor
 TARGET_BAND = (0.85, 1.15)   # target_hashrate: f_ziel * 0.85 .. f_ziel * 1.15
 ANCHOR_STEPS = (1, 2)        # performance: Ankerpunkte = Bandmitte - 1 bzw. 2 Frequenzschritte
 EFF_STOP_RISES = 2           # efficiency: Stopp, wenn bester J/TH je Frequenz >= 2x in Folge steigt
+EFF_MAX_CONSEC_SKIP = 2      # efficiency: erst nach so vielen NICHT erreichbaren Frequenzen in Folge abbrechen
+                             # (eine einzelne nicht versorgte Frequenz - z.B. P2 bei 400 MHz - beendet den Sweep NICHT)
 GATE_TEXT = msg("gate_above_stock")
 
 
@@ -899,7 +904,7 @@ def expected_ths(freq):
 # Messkern
 # ----------------------------------------------------------------------------
 def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_max_s=None,
-                  precheck_only=False):
+                  precheck_only=False, exp_override=None, accept_below=False):
     """precheck_only=True: nur Stufe 1 (Vorabcheck ~25 s), Ergebnis status 'precheck_pass'/'precheck_fail'.
     FULL_MEASURE=True deaktiviert den Vorabcheck-Skip (nicht aber den Stufe-2-Fruehabbruch).
     Fenster-Parameter None -> aktuelle Modulwerte ZUR LAUFZEIT (config.json / Laufparameter wirken so wirklich)."""
@@ -916,7 +921,7 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
 
     # adaptives Warmup
     warm, need, settle_s = [], int(round(SETTLE_WINDOW_S / SAMPLE_S)) + 1, None
-    exp_pre, prechecked = expected_ths(freq), False
+    exp_pre, prechecked = (exp_override or expected_ths(freq)), False
     t_w, n = time.monotonic(), 0
     while True:
         n += 1
@@ -972,7 +977,7 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
             log(f"    [{label}] settled after {settle_s:.0f}s ({settle_how})")
 
     # EARLY_ABORT: Hashrate der letzten SETTLE_WINDOW_S gegen Erwartung
-    exp = expected_ths(freq)
+    exp = exp_override or expected_ths(freq)
     last = [x for tt, x in warm if tt >= warm[-1][0] - SETTLE_WINDOW_S - 0.5 and isinstance(x, (int, float))] if warm else []
     warm_frac = (statistics.mean(last) / 1000 / exp) if (exp and last) else None
     warm_vals = [x for _, x in warm]
@@ -982,7 +987,7 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
         warm_low = warm_frac is not None and warm_frac * (1 + 2 * warm_cv / math.sqrt(len(last))) < HASHRATE_MIN_FRAC_NOISY
     else:
         warm_low = warm_frac is not None and warm_frac < HASHRATE_MIN_FRAC
-    if EARLY_ABORT and warm_low:
+    if EARLY_ABORT and warm_low and not accept_below:
         reason = (msg("early_abort_warmup", pct=round(warm_frac * 100), settle_s=settle_s) if settle_s
                   else msg("early_abort_warmup_unsettled", pct=round(warm_frac * 100)))
         log(f"  => {label:<10} STAGE 2 {msg_text(reason)} -> INVALID, no measurement window")
@@ -1033,7 +1038,7 @@ def measure_point(freq, mv, label, p, window_s=None, target_hits=None, window_ma
             recent = [x for x in series["local_hashrate_ghs"][-int(avg_s / SAMPLE_S):] if isinstance(x, (int, float))]
             rf = statistics.mean(recent) / 1000 / exp if recent else None
             bad = None
-            if rf is not None and rf < lim:
+            if rf is not None and rf < lim and not accept_below:
                 bad = (msg("early_abort_window_noisy", pct=round(rf * 100), avg_s=avg_s, secs=round(el)) if noisy
                        else msg("early_abort_window_hashrate", pct=round(rf * 100), secs=round(el)))
             elif mm and (mm["dvalid"] + mm["dinvalid"]) >= INWIN_MIN_HITS and mm["error_pct"] >= ERROR_MAX_PCT:
@@ -1358,12 +1363,12 @@ def run(st, p, d, freqs=None):
 # ----------------------------------------------------------------------------
 # Gerichtete Suche je Zielmodus
 # ----------------------------------------------------------------------------
-def _measure(f, mv, p, tag="", precheck_only=False):
+def _measure(f, mv, p, tag="", precheck_only=False, exp_override=None, accept_below=False):
     """Punkt messen + protokollieren. PointAbort -> Ausgangspunkt, Ergebnis mit status 'aborted'.
     tag: sprachneutraler Punkt-Tag (reserve, probe_down, knee_reserve, precheck) - Label + Feld 'tag'."""
     label = f"{f}/{mv}" + (f" ({tag})" if tag else "")
     try:
-        r = measure_point(f, mv, label, p, precheck_only=precheck_only)
+        r = measure_point(f, mv, label, p, precheck_only=precheck_only, exp_override=exp_override, accept_below=accept_below)
     except PointAbort as e:
         log(f"  => {label}: ABORT ({e}) -> start point")
         r = {"label": label, "freq": f, "mv": mv, "status": "aborted", "valid": False,
@@ -1478,21 +1483,127 @@ def _best_jth(f):
     return min(v) if v else None
 
 
+def _interp_expectation(anchors, f):
+    """Lokale Hashrate-Erwartung (TH/s) fuer Frequenz f aus zuvor ERFOLGREICH gemessenen Frequenzen.
+    So wird die Erwartung nicht global-linear von Stock (720 MHz) hochgerechnet - was bei nicht-linear
+    skalierenden Minern (Thor P2 bei niedriger Frequenz) die Erwartung ueberschaetzt - sondern aus den
+    Nachbar-Messpunkten interpoliert/extrapoliert. Weniger als 1 Anker -> None (Aufrufer ist dann toleranter)."""
+    pts = sorted(anchors)
+    if not pts:
+        return None
+    if len(pts) == 1:
+        f0, h0 = pts[0]
+        return h0 * f / f0 if f0 else None
+    # zwei naechste Anker -> lineare Interpolation/Extrapolation (lokale Steigung)
+    lo = [a for a in pts if a[0] <= f]
+    hi = [a for a in pts if a[0] > f]
+    (f1, h1), (f2, h2) = (lo[-2:] + hi[:1])[:2] if len(lo) >= 2 else \
+        (lo[-1:] + hi[:2])[:2] if lo else pts[:2]
+    if f2 == f1:
+        return h1
+    return h1 + (h2 - h1) * (f - f1) / (f2 - f1)
+
+
+def _efficiency_search(f, start_mv, floor_mv, top_mv, step, p, exp_override=None):
+    """Aufsteigende Effizienz-Suche fuer EINE Frequenz - rauscht-/skalierungstolerant, zweistufig.
+    Phase 1: normaler Aufstieg (schnelle Fruehabbrueche unveraendert) bis zum ersten VOLL versorgten Punkt
+             -> Vmin + Reserve (identisch zu search_up; kein Mehraufwand fuer sauber skalierende Miner).
+    Phase 2 (kein Punkt erreicht die Erwartung): gibt es einen STABILEN Punkt (err < Grenze, genug Samples),
+             skaliert die Frequenz nur unterlinear -> bester stabiler Punkt (niedrigstes J/TH) gilt als GUELTIG
+             mit Vermerk 'below_linear' (Fall b). Nur INSTABILE/zu schwache Punkte -> nicht erreichbar (skip, Fall a).
+             Um im sauber-unterlinearen Fall belastbare Fensterwerte zu haben, werden dann Boden und Obergrenze
+             mit vollem Fenster (accept_below) nachgemessen - nur wenn die Frequenz die Erwartung sonst verfehlt."""
+    seen, mv = {}, max(start_mv, floor_mv)
+    while mv <= top_mv:
+        r = _measure(f, mv, p)                               # Phase 1: normal (Fruehabbruch aktiv)
+        if r.get("status") == "aborted":
+            return {"found": None, "vmin": None, "rec": None, "aborted": True, "below_linear": False}
+        seen[mv] = r
+        if r.get("valid"):                                   # voll versorgt
+            found = mv
+            if found == max(start_mv, floor_mv) and found > floor_mv:   # Start schon versorgt -> nach unten nachtasten
+                probe = found - step
+                while probe >= floor_mv:
+                    rp = _measure(f, probe, p, "probe_down")
+                    seen[probe] = rp
+                    if rp.get("status") == "aborted":
+                        return {"found": None, "vmin": None, "rec": None, "aborted": True, "below_linear": False}
+                    if not rp.get("valid"):
+                        break
+                    found = probe; probe -= step
+            vmin = min(found + RESERVE_STEPS * step, top_mv)
+            rec = seen.get(vmin) or _measure(f, vmin, p, "reserve")
+            if not rec.get("valid"):
+                rec, vmin = seen[found], found
+            seen[found]["result"] = True; rec["result"] = True
+            log(f"*** {f} MHz: first fully supplied point {found} mV -> Vmin with reserve {vmin} mV "
+                f"({_n(rec.get('hashrate_local_ths'), 3)} TH/s, {_n(rec.get('jth_local'), 2)} J/TH) ***")
+            return {"found": found, "vmin": vmin, "rec": rec, "aborted": False, "below_linear": False}
+        mv += step
+
+    # Phase 2: kein voll versorgter Punkt
+    def _stable(r):
+        return (r.get("status") == "measured" and r.get("hashrate_local_ths")
+                and (r.get("error_pct") is None or r.get("error_pct") < ERROR_MAX_PCT)
+                and not any((m.get("code") if isinstance(m, dict) else m) == "too_few_samples"
+                            for m in (r.get("reason") if isinstance(r.get("reason"), list) else [r.get("reason")])))
+    stable = [r for r in seen.values() if _stable(r)]
+    if not stable:
+        # sauber unterlinear (alle Punkte per Fruehabbruch verworfen): Boden + Obergrenze voll nachmessen
+        for m2 in sorted({max(start_mv, floor_mv), top_mv}):
+            if seen.get(m2, {}).get("status") != "measured":
+                r = _measure(f, m2, p, "below_probe", exp_override=exp_override, accept_below=True)
+                if r.get("status") == "aborted":
+                    return {"found": None, "vmin": None, "rec": None, "aborted": True, "below_linear": False}
+                seen[m2] = r
+        stable = [r for r in seen.values() if _stable(r)]
+    if not stable:                                           # nur instabil/zu schwach -> echte Unterversorgung
+        return {"found": None, "vmin": None, "rec": None, "aborted": False, "below_linear": False}
+    rec = min(stable, key=lambda r: r.get("jth_local") or 1e9)
+    rec["result"] = True
+    rec["reason"] = [m for m in (rec.get("reason") if isinstance(rec.get("reason"), list) else [rec.get("reason")])
+                     if (m.get("code") if isinstance(m, dict) else m) not in ("ok", "underpowered", None)]
+    rec["reason"].append(msg("below_linear", pct=round((rec.get("frac_of_expected") or 0) * 100),
+                             err=round(rec.get("error_pct") or 0, 2)))
+    rec["valid"] = True; rec["below_linear"] = True
+    log(f"*** {f} MHz: no point reaches expectation, but {rec['mv']} mV is stable "
+        f"({_n(rec.get('hashrate_local_ths'), 3)} TH/s, {_n(rec.get('jth_local'), 2)} J/TH, "
+        f"{round((rec.get('frac_of_expected') or 0) * 100)}% of expected) -> valid, below linear expectation ***")
+    return {"found": rec["mv"], "vmin": rec["mv"], "rec": rec, "aborted": False, "below_linear": True}
+
+
 def run_efficiency(p, pl, freqs):
     step = pl["mv_step"]
     prev_vmin, rises, last_best = None, 0, None
-    for f in sorted(freqs):
+    anchors, consec_skip = [], 0
+    flist = sorted(freqs)
+    for f in flist:
         q = next(x for x in pl["points"] if x["freq"] == f)
         start = pl["mv_floor"] if prev_vmin is None else max(pl["mv_floor"], prev_vmin - step)
+        exp_ov = _interp_expectation(anchors, f)
         log(f"--- {f} MHz (ascending): start {start} mV {'(floor)' if prev_vmin is None else f'(Vmin of previous frequency {prev_vmin} - {step})'}"
-            f", up to {q['mv_start']} mV ---")
-        res = search_up(f, start, pl["mv_floor"], q["mv_start"], step, p)
-        RUN["vmin"][str(f)] = {"vmin": res["vmin"], "found": res["found"], "start_mv": start}
-        if res["vmin"] is None:
-            log(f"*** {f} MHz not fully supplied up to {q['mv_start']} mV{' (abort)' if res['aborted'] else ''} "
-                f"-> higher frequencies are not tested ***")
+            f", up to {q['mv_start']} mV"
+            + (f", expected ~{exp_ov:.2f} TH/s (interpolated)" if exp_ov else ", expected from stock (no reference yet)") + " ---")
+        res = _efficiency_search(f, start, pl["mv_floor"], q["mv_start"], step, p, exp_ov)
+        RUN["vmin"][str(f)] = {"vmin": res["vmin"], "found": res["found"], "start_mv": start,
+                               "below_linear": res.get("below_linear", False)}
+        if res["aborted"]:                                   # Sicherungs-Abbruch (Temp/Eingangsspannung) -> stoppen
+            log(f"*** {f} MHz aborted (safety) -> sweep ended ***")
             break
+        if res["vmin"] is None:                              # Frequenz an KEINER Spannung nutzbar -> ueberspringen
+            consec_skip += 1
+            RUN.setdefault("skipped_freqs", []).append(f)
+            log(f"*** {msg_text(msg('freq_unreachable', floor=pl['mv_floor'], top=q['mv_start']))} "
+                f"(consecutive skips: {consec_skip}/{EFF_MAX_CONSEC_SKIP}) ***")
+            if consec_skip >= EFF_MAX_CONSEC_SKIP:
+                log(f"*** {msg_text(msg('eff_stop_skips', n=consec_skip))} ***")
+                RUN["early_stop"] = msg("eff_stop_skips", n=consec_skip)
+                break
+            continue
+        consec_skip = 0
         prev_vmin = res["vmin"]
+        if res["rec"] and res["rec"].get("hashrate_local_ths"):
+            anchors.append((f, res["rec"]["hashrate_local_ths"]))
         best = _best_jth(f)
         if last_best is not None and best is not None:
             rises = rises + 1 if best > last_best else 0
