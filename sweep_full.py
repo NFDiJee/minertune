@@ -40,7 +40,7 @@ FREQ_STEP_FACTOR = 25    # Frequenzschritt = FREQ_STEP_FACTOR * frequency_step (
 MV_STEP_FACTOR   = 5     # Spannungsschritt = MV_STEP_FACTOR * core_step (Profil)
 FLOOR_PCT   = 0.75       # Spannungsboden der Vmin-Suche = stock_core_mv * 0.75
 START_PCT   = 1.00       # Startspannung je Frequenz = stock_core_mv * 1.00 (dann heruntertasten)
-MIN_MV_SPAN_PCT = 0.05   # Spannungs-Suchspanne (core_min .. mv_start) mind. 5 % von stock_core_mv, sonst range_too_narrow
+MIN_MV_SPAN_PCT = 0.05   # Spannungs-Suchspanne (core_min .. mv_start) mind. 5 % von stock_core_mv, sonst reiner Frequenz-Sweep bei fixer Spannung
 START_MARGIN_STEPS = 2   # ab 2. Frequenz: Start = Vmin(hoehere Frequenz) + 2 Spannungsschritte (<= mv_start)
 WINDOW_MIN_S = 600 ; TARGET_HITS = 600 ; WINDOW_MAX_S = 900
 ERROR_MAX_PCT = 2.0 ; HASHRATE_MIN_FRAC = 0.90
@@ -176,7 +176,8 @@ MSG_EN = {
     "est_fast_reserve": "full window per frequency: {n} (Vmin + reserve); precheck ~{secs}s",
     "derive_start_below_floor": "mv_start {start} < mv_floor {floor} (START_PCT < FLOOR_PCT?)",
     "derive_no_freqs": "no frequencies in band",
-    "range_too_narrow": "Voltage range too narrow for a sweep (core_min {min} .. core_max {max}, stock {stock} mV) - only manual point setting is useful here.",
+    "range_too_narrow": "Neither frequency nor voltage range allows a sweep (frequency {fmin} .. {fmax} MHz, core_min {min} .. core_max {max}, stock {stock} mV) - only manual point setting is useful here.",
+    "voltage_fixed_freq_sweep": "Voltage range too narrow for a Vmin search (core_min {min} .. core_max {max}, stock {stock} mV) - pure frequency sweep at fixed {mv} mV.",
     # Fehler / Abbrueche
     "unknown_mode": "sweep_mode {value} unknown ({allowed})",
     "unknown_resolution": "resolution {value} unknown ({allowed})",
@@ -312,19 +313,29 @@ def snap(v, step, lo, hi):
 
 
 def mv_range(smv, floor_pct, cs, cmin, cmax, step):
-    """Spannungs-Suchspanne -> (mv_start, mv_floor, fehler oder None). Beide Werte auf core_step und in
+    """Spannungs-Suchspanne -> (mv_start, mv_floor, fixed). Beide Werte auf core_step und in
     [core_min..core_max]. Schmaler Bereich (Spanne < step): Boden auf den Standard-FLOOR_PCT zurueck, der
     ebenfalls an core_min geklemmt wird (bei Minern wie dem Thor P2 = core_min). Bleibt insgesamt
-    weniger als max(step, MIN_MV_SPAN_PCT * stock) zwischen core_min und mv_start -> range_too_narrow."""
+    weniger als max(step, MIN_MV_SPAN_PCT * stock) zwischen core_min und mv_start -> fixed=True:
+    kein echter Spannungsspielraum, reiner Frequenz-Sweep bei fixer Spannung mv_start (= mv_floor)."""
     start = snap(smv * START_PCT, cs, cmin, cmax)
     floor = snap(smv * floor_pct, cs, cmin, cmax)
     if start - floor < step:
         floor = min(floor, snap(smv * FLOOR_PCT, cs, cmin, cmax))
     avail = start - snap(cmin, cs, cmin, cmax)
-    err = None
-    if avail < max(step, MIN_MV_SPAN_PCT * smv) or start - floor < step:
-        err = msg("range_too_narrow", min=cmin, max=cmax, stock=smv)
-    return start, floor, err
+    fixed = avail < max(step, MIN_MV_SPAN_PCT * smv) or start - floor < step
+    return start, (start if fixed else floor), fixed
+
+
+def range_check(p, f_low, f_high, f_step, mv_fixed):
+    """Adaptive Absicherung -> (notes, fehler oder None). Frequenzspielraum: f_high - f_low >= f_step."""
+    if f_high - f_low < f_step and mv_fixed:
+        return [], msg("range_too_narrow", fmin=p["frequency_min"], fmax=p["frequency_max"],
+                       min=p["core_min"], max=p["core_max"], stock=p["stock_core_mv"])
+    if mv_fixed:
+        return [msg("voltage_fixed_freq_sweep", min=p["core_min"], max=p["core_max"], stock=p["stock_core_mv"],
+                    mv=snap(p["stock_core_mv"] * START_PCT, p["core_step"], p["core_min"], p["core_max"]))], None
+    return [], None
 
 
 def derive(p):
@@ -347,7 +358,8 @@ def derive(p):
     if freqs and freqs[-1] != d["f_high"]:
         freqs.append(d["f_high"])
     d["freqs"] = sorted(set(freqs))
-    d["mv_start"], d["mv_floor"], mv_err = mv_range(smv, FLOOR_PCT, cs, cmin, cmax, d["mv_sweep_step"])
+    d["mv_start"], d["mv_floor"], d["voltage_fixed"] = mv_range(smv, FLOOR_PCT, cs, cmin, cmax, d["mv_sweep_step"])
+    d["notes"], mv_err = range_check(p, d["f_low"], d["f_high"], d["freq_sweep_step"], d["voltage_fixed"])
     vin = p["input_voltage_v"]
     d["input_v_min"] = vin * INPUT_V_MIN_FRAC if isinstance(vin, (int, float)) else None
     d["safe"] = (p["current_frequency_mhz"], p["core_mv"])
@@ -452,15 +464,17 @@ def plan_matrix(p, mode="full", resolution="fein", target_ths=None, allow_above_
     f_mid = clamp(round_to(S * MID_FRAC, fs), f_low, f_high)
     formula["f_mid"] = f"round_to({S} * {MID_FRAC}, {fs}) = {f_mid}"
     # Spannung HART in [core_min..core_max]; zu schmaler Bereich -> klare Meldung statt ungueltiger Werte
-    mv_stock, mv_floor, mv_err = mv_range(SMV, floor_pct, cs, cmin, cmax, mv_step)
-    if mv_err:
-        raise CodedError(mv_err["code"], **mv_err["params"])
+    mv_stock, mv_floor, mv_fixed = mv_range(SMV, floor_pct, cs, cmin, cmax, mv_step)
+    rc_notes, rc_err = range_check(p, f_low, f_high, f_step, mv_fixed)
+    if rc_err:
+        raise CodedError(rc_err["code"], **rc_err["params"])
+    notes.extend(rc_notes)
     mv_top_raw = round_to(SMV * (1 + mh_pct), cs) if allow and mh_pct > 0 else mv_stock
     mv_top = max(mv_stock, snap(mv_top_raw, cs, cmin, cmax))
     formula["mv_start"] = (f"<= stock: {mv_stock} mV; above stock: min(round_to({SMV} * (1 + {mh_pct}), {cs}) = "
                            f"{mv_top_raw}, core_max {cmax}) = {mv_top} mV" if allow and mh_pct > 0
                            else f"round_to({SMV} * {START_PCT}, {cs}), clamped [{cmin}..{cmax}] = {mv_stock} mV")
-    formula["mv_floor"] = f"round_to({SMV} * {floor_pct} = {SMV * floor_pct:g}, {cs}), clamped [{cmin}..{cmax}] = {mv_floor} mV"
+    formula["mv_floor"] = f"round_to({SMV} * {floor_pct} = {SMV * floor_pct:g}, {cs}), clamped [{cmin}..{cmax}] = {mv_floor} mV" + (" (voltage fixed: frequency sweep only)" if mv_fixed else "")
     if f_high_capped:
         notes.append(msg("note_freq_capped", raw=f_high_raw, max=fmax))
     if mv_top_raw > cmax:
@@ -530,7 +544,7 @@ def plan_matrix(p, mode="full", resolution="fein", target_ths=None, allow_above_
     return {"sweep_mode": mode, "resolution": resolution, "freq_step": f_step, "mv_step": mv_step,
             "band": {"from_mhz": lo, "to_mhz": hi, "reason": band_reason}, "anchors": anchors,
             "f_low": f_low, "f_mid": f_mid, "f_high": f_high, "mv_stock": mv_stock, "mv_top": mv_top,
-            "mv_floor": mv_floor, "allow_above_stock": allow, "freq_high_pct": fh_pct, "mv_high_pct": mh_pct,
+            "mv_floor": mv_floor, "voltage_fixed": mv_fixed, "allow_above_stock": allow, "freq_high_pct": fh_pct, "mv_high_pct": mh_pct,
             "order": order, "early_stop_rule": early_stop, "target": target,
             "gh_per_mhz": gh_per_mhz, "gh_per_mhz_preliminary": gh_prelim,
             "requires_gate": requires_gate, "gate_text": GATE_TEXT if requires_gate else None,
