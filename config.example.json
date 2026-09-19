@@ -1,0 +1,23 @@
+{
+  "miner_url": "http://192.168.1.100/api/v1",
+  "bind_host": "0.0.0.0",
+  "bind_port": 8477,
+  "control_pin": "CHANGEME",
+  "window_min_s": 600,
+  "target_hits": 600,
+  "window_max_s": 900,
+  "freq_low_pct": 0.52,
+  "freq_high_pct": 0.0,
+  "allow_above_stock": false,
+  "freq_step_factor": 25,
+  "mv_step_factor": 5,
+  "floor_pct": 0.75,
+  "error_max_pct": 2.0,
+  "hashrate_min_frac": 0.9,
+  "soft_asic_c": 70,
+  "soft_vr_c": 85,
+  "hard_asic_c": 80,
+  "hard_vr_c": 95,
+  "input_v_min_frac": 0.95,
+  "language": "en"
+}

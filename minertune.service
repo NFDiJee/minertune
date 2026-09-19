@@ -1,0 +1,36 @@
+[Unit]
+Description=MinerTune - tuning control center for Harlo-OS miners
+Documentation=https://github.com/NFDiJee/minertune
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=minertune
+Group=minertune
+WorkingDirectory=/opt/minertune
+ExecStart=/opt/minertune/venv/bin/python -u control.py
+# PIN nach Aenderung in config.json neu laden, ohne Neustart
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+# Sweep-Thread setzt den Miner beim Stoppen auf den Ausgangspunkt zurueck -> Zeit lassen
+TimeoutStopSec=30
+Environment=PYTHONDONTWRITEBYTECODE=1
+UMask=0027
+
+# --- Haertung ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/minertune
+RestrictAddressFamilies=AF_INET AF_INET6
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

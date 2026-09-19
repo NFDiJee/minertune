@@ -1,0 +1,24 @@
+# --- privat / lokal: NIEMALS committen ---
+config.json
+config.json.tmp
+*.tmp
+runs/
+.env
+*.token
+*.pem
+*.key
+
+# --- Laufzeit / Build ---
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# --- Entwicklungs-Altbestand ---
+archive/
+
+# --- Editor / OS ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
