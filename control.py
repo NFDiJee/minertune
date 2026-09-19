@@ -1528,6 +1528,8 @@ canvas { width: 100%; height: 100%; display: block; }
 .planinfo { margin: 12px 0; }
 pre.log { background: var(--card-2); border: 1px solid var(--card-border); border-radius: 10px; padding: 10px 12px; max-height: 260px;
   overflow: auto; font-size: 12px; margin: 0; white-space: pre; color: var(--muted); }
+details.logbox { position: relative; }
+.logbtns { position: absolute; top: -3px; right: 0; display: flex; gap: 6px; }
 .clip { display: inline-block; max-width: 440px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .pill.skip { background: var(--st-wait-bg); color: var(--st-wait-fg); opacity: .7; }
 tr.s-skip td { color: var(--st-wait-fg); opacity: .6; }
@@ -1674,7 +1676,10 @@ tr.sub.s-ok td { background: var(--st-ok-bg); }
             <div class="top"><span><b id="t_ph">–</b></span><span class="muted mono" id="t_pt"></span></div>
             <div class="bar"><div id="bar" style="width:0"></div></div>
           </div>
-          <details style="margin-top:12px"><summary data-i18n="live.log">Log</summary><pre id="log" class="log"></pre></details>
+          <details class="logbox" style="margin-top:12px"><summary data-i18n="live.log">Log</summary>
+            <div class="logbtns"><button type="button" id="logcopy" class="btn ghost small" data-i18n="log.copy">Copy</button>
+            <button type="button" id="logclear" class="btn ghost small" data-i18n="log.clear" data-i18n-title="log.clear_hint" title="clears the display only, not the server log">Clear</button></div>
+            <pre id="log" class="log"></pre></details>
         </div>
       </section>
 
@@ -1986,8 +1991,31 @@ function render(s){last=s;const C=s.control,S=s.sweep||{},cur=S.current||{},L=cu
    <td>${F.jth(r.jth_local)}</td><td>${F.pct(r.error_pct)}</td><td>${F.temp(r.asic_temp_max)}/${F.temp(r.vr_temp_max)}</td>
    <td class="wrap">${r.valid?t("word.valid"):t("word.invalid")}${r.idx===best?" · "+t("matrix.best_jth"):""} <span class=muted>${esc(trMsg(r.reason))}</span></td></tr>`).join("")||`<tr><td class=muted colspan=12>${t("matrix.no_points")}</td></tr>`)+"</tbody>";
   renderMatrix(s.matrix);
-  $("log").textContent=[...(S.log||[]),...(C.events||[]).map(e=>"[ctrl] "+e)].join("\n");
+  renderLog(S.log||[],(C.events||[]).map(e=>"[ctrl] "+e));
   chartData=res;chartBest=best;redrawChart();}
+
+/* ================= Log: Frontend-Puffer, Kopieren, Leeren ================= */
+/* Der Server liefert nur ein gleitendes Fenster (Sweep-Log + Steuer-Ereignisse). Das Frontend sammelt neue
+   Zeilen per Ueberlappungsvergleich in einem eigenen Puffer (max. LOG_KEEP Zeilen je Quelle).
+   "Leeren" leert nur diesen Puffer/die Anzeige - Server-Log und journalctl bleiben unberuehrt. */
+const LOG_KEEP=500;
+const logAcc={sweep:{prev:[],lines:[]},ctrl:{prev:[],lines:[]}};
+function logMerge(a,cur){const prev=a.prev;let k=Math.min(prev.length,cur.length);
+  for(;k>0;k--){let ok=true;for(let i=0;i<k;i++)if(prev[prev.length-k+i]!==cur[i]){ok=false;break}if(ok)break}
+  a.lines=a.lines.concat(cur.slice(k)).slice(-LOG_KEEP);a.prev=cur.slice();}
+function logText(){return [...logAcc.sweep.lines,...logAcc.ctrl.lines].join("\n")}
+function renderLog(sweep,ctrl){logMerge(logAcc.sweep,sweep);logMerge(logAcc.ctrl,ctrl);
+  const el=$("log"),txt=logText();if(el.textContent!==txt)el.textContent=txt;}
+function copyFallback(txt){const ta=document.createElement("textarea");ta.value=txt;ta.setAttribute("readonly","");
+  ta.style.position="fixed";ta.style.top="-1000px";ta.style.opacity="0";document.body.appendChild(ta);ta.select();
+  let ok=false;try{ok=document.execCommand("copy")}catch(e){ok=false}document.body.removeChild(ta);return ok}
+async function copyLog(){const txt=logText(),b=$("logcopy");let ok=false;
+  if(navigator.clipboard&&window.isSecureContext){try{await navigator.clipboard.writeText(txt);ok=true}catch(e){ok=false}}
+  if(!ok)ok=copyFallback(txt);
+  if(ok){b.textContent=t("log.copied");clearTimeout(b._t);b._t=setTimeout(()=>b.textContent=t("log.copy"),1500)}
+  else toast(t("log.copy")+": ✗",true);}
+function clearLog(){for(const a of Object.values(logAcc))a.lines=[];$("log").textContent="";}
+$("logcopy").onclick=copyLog;$("logclear").onclick=clearLog;
 
 /* ================= J/TH-Kurve ================= */
 let chartData=[],chartBest=null;
