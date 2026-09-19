@@ -562,8 +562,23 @@ def _default_route_iface():
     return None
 
 
+def _iface_names():
+    """Interface-Namen. socket.if_nameindex() braucht in glibc einen AF_NETLINK-Socket; der ist unter
+    systemd RestrictAddressFamilies=AF_INET AF_INET6 (minertune.service) verboten -> OSError Errno 97.
+    Dann ohne Socket aus /proc/net/dev lesen. Nichts lesbar -> leere Liste statt Absturz."""
+    try:
+        return [name for _, name in socket.if_nameindex()]
+    except OSError:
+        pass
+    try:
+        with open("/proc/net/dev") as f:
+            return [ln.split(":", 1)[0].strip() for ln in f.readlines()[2:] if ":" in ln]
+    except OSError:
+        return []
+
+
 def _iface_ipv4(name):
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:     # bewusst nur IPv4 (/24-Scan)
         req = struct.pack("256s", name.encode()[:15])
         addr = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, req)[20:24])     # SIOCGIFADDR
         mask = socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x891B, req)[20:24])     # SIOCGIFNETMASK
@@ -574,12 +589,12 @@ def local_subnets():
     """Eigene IPv4-Interfaces -> /24-Netze mit Label; Default-Route-Interface = empfohlen."""
     default_if = _default_route_iface()
     out, seen = [], set()
-    for _, name in socket.if_nameindex():
+    for name in _iface_names():
         try:
-            addr, mask = _iface_ipv4(name)
-        except OSError:
+            addr, mask = _iface_ipv4(name)          # Interface ohne IPv4 / nicht abfragbar -> ueberspringen
+            ip = ipaddress.IPv4Address(addr)
+        except (OSError, ValueError):
             continue
-        ip = ipaddress.IPv4Address(addr)
         if ip.is_loopback or ip.is_link_local:
             continue
         net = ipaddress.IPv4Network(f"{addr}/24", strict=False)
@@ -601,7 +616,9 @@ def local_subnets():
 
 
 def probe_miner(ip):
-    """Einzelnes GET auf http://<ip>/api/v1/status (nur lesend). -> Trefferdict oder None."""
+    """Einzelnes GET auf http://<ip>/api/v1/status (nur lesend). -> Trefferdict oder None.
+    ip ist ein IPv4-Literal -> Verbindung immer ueber AF_INET. Jeder Fehler (auch OSError/Errno 97)
+    markiert nur diesen Host als nicht erreichbar; der Scan laeuft weiter."""
     try:
         req = urllib.request.Request(f"http://{ip}/api/v1/status", method="GET", headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=SCAN_TIMEOUT_S) as r:
@@ -631,6 +648,9 @@ def search_miners(which="auto"):
         if net.prefixlen < 24:
             raise ValueError(f"{net} is larger than /24 - only /24 or smaller allowed")
         nets = [str(net)]
+    if not nets:
+        raise ValueError("no IPv4 network interface found for the miner search - enter the miner IP directly "
+                         "or choose a subnet under 'Advanced'")
     hosts = [str(h) for n in nets for h in ipaddress.IPv4Network(n).hosts()]
     t0 = time.monotonic()
     clog(f"Miner search: {', '.join(nets)} ({len(hosts)} addresses, {SCAN_WORKERS} parallel, timeout {SCAN_TIMEOUT_S}s)")
