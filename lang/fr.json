@@ -188,7 +188,7 @@
  "col.mining": "Minage",
  "col.temp": "ASIC / VR °C",
  "card.curve.title": "Courbe J/TH",
- "card.curve.sub": "points valides de l'exécution en cours · couleur = fréquence",
+ "card.curve.sub": "points de résultat valides du balayage actuel",
  "curve.empty": "Aucun point valide dans l'exécution en cours",
  "curve.best": "meilleur J/TH {f} MHz / {mv} mV · {j} J/TH",
  "card.history.title": "Historique",
@@ -374,5 +374,9 @@
  "subnet.custom_ph": "p. ex. 192.168.0.0/24",
  "subnet.custom_hint": "Aussi pour des réseaux auxquels cet ordinateur n'est pas connecté, s'ils sont joignables via le routeur. Plages privées uniquement, un /24 à la fois.",
  "err.subnet_invalid": "Sous-réseau non valide (utilisez x.y.z.0/24, plages privées uniquement)",
- "err.subnet_public": "Seuls les sous-réseaux privés peuvent être scannés"
+ "err.subnet_public": "Seuls les sous-réseaux privés peuvent être scannés",
+ "curve.x_freq": "Fréquence",
+ "curve.x_volt": "Tension",
+ "curve.axis_freq": "Fréquence (MHz)",
+ "curve.axis_volt": "core_mv (mV)"
 }

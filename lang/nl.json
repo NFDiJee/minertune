@@ -188,7 +188,7 @@
  "col.mining": "Mining",
  "col.temp": "ASIC / VR °C",
  "card.curve.title": "J/TH-curve",
- "card.curve.sub": "geldige punten van de huidige run · kleur = frequentie",
+ "card.curve.sub": "geldige resultaatpunten van de huidige run",
  "curve.empty": "Nog geen geldige punten in de huidige run",
  "curve.best": "beste J/TH {f} MHz / {mv} mV · {j} J/TH",
  "card.history.title": "Geschiedenis",
@@ -374,5 +374,9 @@
  "subnet.custom_ph": "bijv. 192.168.0.0/24",
  "subnet.custom_hint": "Ook voor netwerken waarop deze computer niet is aangesloten, als ze via de router bereikbaar zijn. Alleen privébereiken, één /24 tegelijk.",
  "err.subnet_invalid": "Ongeldig subnet (gebruik x.y.z.0/24, alleen privébereiken)",
- "err.subnet_public": "Alleen privé-subnets kunnen worden gescand"
+ "err.subnet_public": "Alleen privé-subnets kunnen worden gescand",
+ "curve.x_freq": "Frequentie",
+ "curve.x_volt": "Spanning",
+ "curve.axis_freq": "Frequentie (MHz)",
+ "curve.axis_volt": "core_mv (mV)"
 }

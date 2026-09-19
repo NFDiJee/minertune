@@ -187,7 +187,7 @@
  "col.mining": "Mining",
  "col.temp": "ASIC / VR °C",
  "card.curve.title": "J/TH curve",
- "card.curve.sub": "valid points of the current run · colour = frequency",
+ "card.curve.sub": "valid result points of the current run",
  "curve.empty": "No valid points in the current run yet",
  "curve.best": "best J/TH {f} MHz / {mv} mV · {j} J/TH",
  "card.history.title": "History",
@@ -373,5 +373,9 @@
  "subnet.custom_ph": "e.g. 192.168.0.0/24",
  "subnet.custom_hint": "Also for networks this computer is not attached to, if reachable via your router. Private ranges only, one /24 at a time.",
  "err.subnet_invalid": "Invalid subnet (use x.y.z.0/24, private ranges only)",
- "err.subnet_public": "Only private subnets can be scanned"
+ "err.subnet_public": "Only private subnets can be scanned",
+ "curve.x_freq": "Frequency",
+ "curve.x_volt": "Voltage",
+ "curve.axis_freq": "Frequency (MHz)",
+ "curve.axis_volt": "core_mv (mV)"
 }

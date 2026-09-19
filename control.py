@@ -1872,7 +1872,12 @@ tr.sub.s-ok td { background: var(--st-ok-bg); }
 
     <!-- CURVE -->
     <section class="card">
-      <div class="card-h"><h2 data-i18n="card.curve.title">J/TH curve</h2><span class="sub" data-i18n="card.curve.sub">valid points of the current run · colour = frequency</span></div>
+      <div class="card-h"><h2 data-i18n="card.curve.title">J/TH curve</h2><span class="sub" data-i18n="card.curve.sub">valid result points of the current run</span>
+        <span class="xtoggle" style="margin-left:auto">
+          <button type="button" id="xaxis_freq" class="btn ghost small" data-i18n="curve.x_freq">Frequency</button>
+          <button type="button" id="xaxis_mv" class="btn ghost small" data-i18n="curve.x_volt">Voltage</button>
+        </span>
+      </div>
       <div class="card-b">
         <div class="canvasbox"><canvas id="chart"></canvas></div>
         <div class="curve-legend" id="curveLegend"></div>
@@ -2162,29 +2167,55 @@ $("logcopy").onclick=copyLog;$("logclear").onclick=clearLog;
 
 /* ================= J/TH-Kurve ================= */
 let chartData=[],chartBest=null;
+let chartX=(()=>{try{return lsGet("ctrl_chart_x")||"freq"}catch(e){return "freq"}})();
+function setChartX(mode){chartX=mode;try{lsSet("ctrl_chart_x",mode)}catch(e){}
+  const f=$("xaxis_freq"),v=$("xaxis_mv");if(f)f.setAttribute("aria-pressed",mode==="freq");if(v)v.setAttribute("aria-pressed",mode==="mv");
+  if(f)f.classList.toggle("active-btn-success",mode==="freq");if(v)v.classList.toggle("active-btn-success",mode==="mv");
+  redrawChart();}
 function redrawChart(){drawChart(chartData,chartBest)}
+function isCal(r){return String(r&&r.label||"").startsWith("cal-")}
 function drawChart(results,best){const cv=$("chart");if(!cv)return;const dpr=window.devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;if(!W)return;
   cv.width=W*dpr;cv.height=H*dpr;const g=cv.getContext("2d");g.scale(dpr,dpr);g.clearRect(0,0,W,H);
   const cs=getComputedStyle(root),muted=cs.getPropertyValue("--muted").trim(),line=cs.getPropertyValue("--line").trim(),acc=cs.getPropertyValue("--accent").trim(),text=cs.getPropertyValue("--text").trim();
-  const pts=(results||[]).filter(r=>r.valid===true&&r.jth_local!=null);g.font="13px system-ui,sans-serif";g.fillStyle=muted;
+  // nur GUELTIGE Ergebnispunkte; Kalibrierpunkte (cal-*) NIE - sie liegen weit weg (Stock) und verzerren die Achse
+  let pts=(results||[]).filter(r=>r.valid===true&&r.jth_local!=null&&!isCal(r));
+  g.font="13px system-ui,sans-serif";g.fillStyle=muted;
   if(!pts.length){g.fillText(t("curve.empty"),18,28);$("curveLegend").innerHTML="";return}
-  let x0=Math.min(...pts.map(r=>r.core_mv)),x1=Math.max(...pts.map(r=>r.core_mv)),y0=Math.min(...pts.map(r=>r.jth_local)),y1=Math.max(...pts.map(r=>r.jth_local));
-  if(x1-x0<40){const m=(x0+x1)/2;x0=m-20;x1=m+20}if(y1-y0<0.5){const m=(y0+y1)/2;y0=m-0.25;y1=m+0.25}const py=(y1-y0)*.12;y0-=py;y1+=py;const px=(x1-x0)*.05;x0-=px;x1+=px;
+  const freqMode=chartX!=="mv";
+  const xkey=freqMode?"frequency_mhz":"core_mv";
+  // Frequenz-Modus: je Frequenz nur der beste (niedrigstes J/TH) Punkt -> saubere J/TH-ueber-Frequenz-Kurve
+  if(freqMode){const byf=new Map();pts.forEach(r=>{const k=r.frequency_mhz;if(!byf.has(k)||r.jth_local<byf.get(k).jth_local)byf.set(k,r)});
+    pts=[...byf.values()];}
+  const bestPt=pts.reduce((a,r)=>(!a||r.jth_local<a.jth_local)?r:a,null);
+  let x0=Math.min(...pts.map(r=>r[xkey])),x1=Math.max(...pts.map(r=>r[xkey])),y0=Math.min(...pts.map(r=>r.jth_local)),y1=Math.max(...pts.map(r=>r.jth_local));
+  const minspan=freqMode?20:40;
+  if(x1-x0<minspan){const m=(x0+x1)/2;x0=m-minspan/2;x1=m+minspan/2}if(y1-y0<0.5){const m=(y0+y1)/2;y0=m-0.25;y1=m+0.25}
+  const py=(y1-y0)*.12;y0-=py;y1+=py;const px=(x1-x0)*.05;x0-=px;x1+=px;
   const Lm=48,R=14,T=12,B=34,X=v=>Lm+(v-x0)/(x1-x0)*(W-Lm-R),Y=v=>T+(1-(v-y0)/(y1-y0))*(H-T-B);
   g.font="12px system-ui,sans-serif";g.strokeStyle=line;g.lineWidth=1;g.textAlign="right";g.textBaseline="middle";
   for(let i=0;i<=5;i++){const v=y0+(y1-y0)*i/5;g.beginPath();g.moveTo(Lm,Y(v));g.lineTo(W-R,Y(v));g.stroke();g.fillText(fmt(v,2),Lm-6,Y(v))}
   g.textAlign="center";g.textBaseline="top";for(let i=0;i<=5;i++){const v=x0+(x1-x0)*i/5;g.fillText(Math.round(v),X(v),H-B+6)}
-  g.fillText("core_mv",(Lm+W-R)/2,H-15);
+  g.fillStyle=muted;g.fillText(freqMode?t("curve.axis_freq"):t("curve.axis_volt"),(Lm+W-R)/2,H-15);
   const fs=[...new Set(pts.map(r=>r.frequency_mhz))].sort((a,b)=>a-b),leg=[];
-  fs.forEach((f,i)=>{const hue=Math.round(205-175*(fs.length>1?i/(fs.length-1):0)),col=`hsl(${hue},72%,55%)`;leg.push([f,col]);
-    const s=pts.filter(r=>r.frequency_mhz===f).sort((a,b)=>a.core_mv-b.core_mv);g.strokeStyle=col;g.lineWidth=1.6;g.beginPath();
-    s.forEach((r,j)=>j?g.lineTo(X(r.core_mv),Y(r.jth_local)):g.moveTo(X(r.core_mv),Y(r.jth_local)));g.stroke();
-    s.forEach(r=>{g.fillStyle=col;g.beginPath();g.arc(X(r.core_mv),Y(r.jth_local),3.4,0,7);g.fill()})});
-  const b=pts.find(r=>r.idx===best);
-  if(b){const bx=X(b.core_mv),by=Y(b.jth_local);g.strokeStyle=acc;g.lineWidth=2.5;g.beginPath();g.arc(bx,by,9,0,7);g.stroke();
+  if(freqMode){
+    // eine Kurve entlang der Frequenz; Punkte nach Frequenz eingefaerbt
+    const sp=[...pts].sort((a,b)=>a.frequency_mhz-b.frequency_mhz);
+    g.strokeStyle=acc;g.lineWidth=1.8;g.beginPath();sp.forEach((r,j)=>j?g.lineTo(X(r.frequency_mhz),Y(r.jth_local)):g.moveTo(X(r.frequency_mhz),Y(r.jth_local)));g.stroke();
+    fs.forEach((f,i)=>{const hue=Math.round(205-175*(fs.length>1?i/(fs.length-1):0)),col=`hsl(${hue},72%,55%)`;leg.push([f,col]);
+      const r=sp.find(x=>x.frequency_mhz===f);if(r){g.fillStyle=col;g.beginPath();g.arc(X(r.frequency_mhz),Y(r.jth_local),4,0,7);g.fill()}});
+  }else{
+    fs.forEach((f,i)=>{const hue=Math.round(205-175*(fs.length>1?i/(fs.length-1):0)),col=`hsl(${hue},72%,55%)`;leg.push([f,col]);
+      const s2=pts.filter(r=>r.frequency_mhz===f).sort((a,b)=>a.core_mv-b.core_mv);g.strokeStyle=col;g.lineWidth=1.6;g.beginPath();
+      s2.forEach((r,j)=>j?g.lineTo(X(r.core_mv),Y(r.jth_local)):g.moveTo(X(r.core_mv),Y(r.jth_local)));g.stroke();
+      s2.forEach(r=>{g.fillStyle=col;g.beginPath();g.arc(X(r.core_mv),Y(r.jth_local),3.4,0,7);g.fill()})});
+  }
+  if(bestPt){const bx=X(bestPt[xkey]),by=Y(bestPt.jth_local);g.strokeStyle=acc;g.lineWidth=2.5;g.beginPath();g.arc(bx,by,9,0,7);g.stroke();
     g.fillStyle=text;g.textAlign="left";g.textBaseline="bottom";g.font="600 12px system-ui,sans-serif";
-    g.fillText(t("curve.best",{f:b.frequency_mhz,mv:b.core_mv,j:F.jth(b.jth_local)}),Math.min(bx+12,W-260),by-8)}
+    g.fillText(t("curve.best",{f:bestPt.frequency_mhz,mv:bestPt.core_mv,j:F.jth(bestPt.jth_local)}),Math.min(bx+12,W-260),by-8)}
   $("curveLegend").innerHTML=leg.map(([f,c])=>`<span><i style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c};margin-right:5px"></i>${f} MHz</span>`).join("");}
+if($("xaxis_freq"))$("xaxis_freq").onclick=()=>setChartX("freq");
+if($("xaxis_mv"))$("xaxis_mv").onclick=()=>setChartX("mv");
+setChartX(chartX);
 window.addEventListener("resize",redrawChart);
 
 /* ================= Historie ================= */

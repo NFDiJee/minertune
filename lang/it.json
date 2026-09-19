@@ -188,7 +188,7 @@
  "col.mining": "Mining",
  "col.temp": "ASIC / VR °C",
  "card.curve.title": "Curva J/TH",
- "card.curve.sub": "punti validi dell'esecuzione corrente · colore = frequenza",
+ "card.curve.sub": "punti di risultato validi dello sweep attuale",
  "curve.empty": "Ancora nessun punto valido nell'esecuzione corrente",
  "curve.best": "miglior J/TH {f} MHz / {mv} mV · {j} J/TH",
  "card.history.title": "Cronologia",
@@ -374,5 +374,9 @@
  "subnet.custom_ph": "es. 192.168.0.0/24",
  "subnet.custom_hint": "Anche per reti a cui questo computer non è collegato, se raggiungibili tramite il router. Solo intervalli privati, una /24 alla volta.",
  "err.subnet_invalid": "Subnet non valida (usa x.y.z.0/24, solo intervalli privati)",
- "err.subnet_public": "Si possono scansionare solo subnet private"
+ "err.subnet_public": "Si possono scansionare solo subnet private",
+ "curve.x_freq": "Frequenza",
+ "curve.x_volt": "Tensione",
+ "curve.axis_freq": "Frequenza (MHz)",
+ "curve.axis_volt": "core_mv (mV)"
 }
